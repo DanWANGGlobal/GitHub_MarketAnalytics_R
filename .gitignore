@@ -1,40 +1,5 @@
-# R
-.Rproj.user
-.Rhistory
-.RData
-.Ruserdata
-.renv/
-renv/library/
-renv/python/
-renv/staging/
-
-# Output directories (local development)
-output/
-!output/.gitkeep
-
-# Input data (should be provided separately)
+# Input files
 input/*.xlsx
-input/*.csv
+!input/tickers_macro.xlsx
+!input/template_AnalysisReport.xlsx
 !input/.gitkeep
-
-# Logs
-*.log
-
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
