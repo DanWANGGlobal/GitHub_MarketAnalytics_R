@@ -1,0 +1,13 @@
+# R
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.renv/
+renv/library/
+
+# Output
+output/
+
+# OS
+.DS_Store
