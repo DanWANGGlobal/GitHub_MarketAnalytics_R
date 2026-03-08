@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
-# Cloud-Ready Market Analytics Script - 完整版
-# 保留所有原始输出字段
+# Cloud-Ready Market Analytics - 完整还原版
+# 完全匹配原始本地版本输出
 
 # =============================================================================
 # Environment Setup
@@ -18,12 +18,15 @@ for (dir in c(OUTPUT_DIR, DATA_ANALYSIS_DIR, CHARTING_DIR)) {
 setwd(WORK_DIR)
 
 # =============================================================================
-# Package Management
+# Package Management - 完整版
 # =============================================================================
 
 message("Loading packages...")
 
-packages <- c("quantmod", "xts", "openxlsx", "dplyr", "plotly", "htmltools", "htmlwidgets", "TTR", "lubridate", "zoo")
+# 基础包
+packages <- c("quantmod", "xts", "openxlsx", "dplyr", "lubridate", "zoo", 
+              "TTR", "plotly", "htmltools", "htmlwidgets", "tidyquant", 
+              "PerformanceAnalytics", "slider", "scales")
 
 for (pkg in packages) {
   if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
@@ -36,21 +39,40 @@ for (pkg in packages) {
 message("Packages loaded!")
 
 # =============================================================================
-# Parameters
+# Parameters - 完全匹配原始
 # =============================================================================
 
 dataHistory <- 10
 eDate <- Sys.Date()
 sDate <- eDate - years(dataHistory)
 
+maMode <- "EMA"
+maFun <- switch(maMode, "EMA" = TTR::EMA, "SMA" = TTR::SMA)
 maParameters <- c(5, 21, 89, 144)
+
+extremeCut <- c(0.01, 1 - 0.01)
+warningCut <- c(0.05, 1 - 0.05)
+
 VolCalWindow <- 20
 ATRCalWindow <- 6
 VaRCalWindow <- 750
 RollWindow <- 180
+CorWindow <- 60
+
 ChgPeriod <- c(5, 20, 60, 120, 180, 250)
 
-dataCheck <- 300
+dataCheck <- max(VolCalWindow, ATRCalWindow, VaRCalWindow, RollWindow, CorWindow, 
+                 maParameters, ChgPeriod, 250)
+
+head <- "TraderX-Flow"
+source_annotation <- list(
+  x = 0, y = 0.01,
+  text = "微信公众号【TraderX-Flow】",
+  showarrow = FALSE,
+  xref = 'paper', yref = 'paper',
+  xanchor = 'left', yanchor = 'auto',
+  font = list(size = 10, color = "black")
+)
 
 # =============================================================================
 # Helper Functions
@@ -60,47 +82,15 @@ xts_to_tbl <- function(xts_data) {
   df <- as.data.frame(xts_data)
   df$Date <- index(xts_data)
   rownames(df) <- NULL
-  return(as_tibble(df))
-}
-
-pct_rank <- function(x) {
-  if (all(is.na(x))) return(rep(NA, length(x)))
-  rank(x, na.last = "keep") / sum(!is.na(x))
-}
-
-run_pct_rank <- function(x, n, cumulative = FALSE) {
-  if (cumulative) {
-    sapply(1:length(x), function(i) {
-      if (i == 1 || all(is.na(x[1:i]))) return(NA)
-      pct_rank(x[1:i])[i]
-    })
-  } else {
-    sapply(1:length(x), function(i) {
-      start <- max(1, i - n + 1)
-      if (sum(!is.na(x[start:i])) < 2) return(NA)
-      pct_rank(x[start:i])[i - start + 1]
-    })
-  }
-}
-
-calc_roc <- function(prices, n) {
-  if (length(prices) <= n) return(rep(NA, length(prices)))
-  c(rep(NA, n), diff(prices, n) / lag(prices, n)[(n+1):length(prices)])
-}
-
-safe_last <- function(x, default = NA) {
-  if (length(x) == 0 || all(is.na(x))) return(default)
-  val <- tail(na.omit(x), 1)
-  if (length(val) == 0) return(default)
-  return(val)
+  return(tibble::as_tibble(df))
 }
 
 # =============================================================================
-# Data Download - 带重试机制
+# Data Download - 带重试
 # =============================================================================
 
 yahooDownload <- function(tickers, sDate, eDate) {
-  message(paste("Downloading data for", nrow(tickers), "tickers..."))
+  message("Downloading data from Yahoo Finance...")
   sTime <- Sys.time()
   yahooData <- list()
   
@@ -108,12 +98,12 @@ yahooDownload <- function(tickers, sDate, eDate) {
     symbol <- tickers$ticker[i]
     name <- tickers$name[i]
     
-    message(paste("[", i, "/", nrow(tickers), "] Downloading:", name, "(", symbol, ")"))
+    message(paste("[", i, "/", nrow(tickers), "]", name, "(", symbol, ")"))
     
     success <- FALSE
     for (attempt in 1:3) {
       if (attempt > 1) {
-        message(paste("Retry attempt", attempt))
+        message(paste("  Retry attempt", attempt))
         Sys.sleep(2)
       }
       
@@ -122,379 +112,342 @@ yahooDownload <- function(tickers, sDate, eDate) {
                           src = "yahoo", auto.assign = FALSE)
         
         if (!is.null(data) && nrow(data) > 0) {
-          message(paste("Got data for", name, "- rows:", nrow(data)))
-          
           df <- xts_to_tbl(data)
           colnames(df) <- c("Open", "High", "Low", "Close", "Volume", "Last", "Date")
           df <- df[, c("Date", "Open", "High", "Low", "Close", "Volume", "Last")]
           yahooData[[name]] <- df
-          
-          message(paste("SUCCESS:", name, "-", nrow(df), "rows"))
+          message(paste("  SUCCESS:", nrow(df), "rows"))
           success <- TRUE
           break
         }
       }, error = function(e) {
-        message(paste("Attempt", attempt, "failed:", conditionMessage(e)))
+        message(paste("  Attempt", attempt, "failed:", conditionMessage(e)))
       })
     }
     
     if (!success) {
-      message(paste("FAILED after 3 attempts:", name))
+      message(paste("  FAILED:", name))
+      yahooData[[name]] <- NA
     }
+  }
+  
+  # 保存数据
+  valid_data <- yahooData[!sapply(yahooData, is.null)]
+  if (length(valid_data) > 0) {
+    write.xlsx(valid_data, file.path(OUTPUT_DIR, "data.xlsx"), overwrite = TRUE)
   }
   
   eTime <- Sys.time()
   message(paste("Download completed in", round(eTime - sTime, 2), "seconds"))
-  message(paste("Successfully downloaded:", length(yahooData), "/", nrow(tickers), "instruments"))
-  
-  if (length(yahooData) > 0) {
-    write.xlsx(yahooData, file.path(OUTPUT_DIR, "data.xlsx"), overwrite = TRUE)
-  }
-  
   invisible(yahooData)
 }
 
 # =============================================================================
-# Data Analysis - 完整版
+# Data Analysis - 完全还原原始版本
 # =============================================================================
 
 DataAnalysis <- function(tickers) {
-  message("Starting data analysis...")
-  
-  data_file <- file.path(OUTPUT_DIR, "data.xlsx")
-  if (!file.exists(data_file)) {
-    message("ERROR: data.xlsx not found!")
-    return(NULL)
-  }
-  
-  sheet_names <- getSheetNames(data_file)
-  message(paste("Found sheets:", paste(sheet_names, collapse = ", ")))
-  
-  for (name in sheet_names) {
-    message(paste("Analyzing:", name))
+  for (i in 1:nrow(tickers)) {
+    name <- tickers$name[i]
+    message(paste(name, ": started analysis..."))
     
     tryCatch({
+      # 读取数据
+      data_file <- file.path(OUTPUT_DIR, "data.xlsx")
+      if (!file.exists(data_file)) {
+        message("  ERROR: data.xlsx not found")
+        next
+      }
+      
+      all_sheets <- getSheetNames(data_file)
+      if (!(name %in% all_sheets)) {
+        message(paste("  ERROR: Sheet", name, "not found"))
+        next
+      }
+      
       data <- read.xlsx(data_file, sheet = name)
-      
-      if (is.null(data) || nrow(data) < dataCheck) {
-        message(paste("Skip:", name, "- insufficient data"))
+      if (is.null(data) || nrow(data) == 0) {
+        message("  ERROR: No data")
         next
       }
       
-      # 基础数据处理
-      data$Date <- as.Date(data$Date)
-      data <- data %>% arrange(Date)
-      data <- data %>% filter(!is.na(Last), !is.na(High), !is.na(Low))
+      # 基础数据处理 - 完全匹配原始
+      data <- data %>%
+        select(Date, Last, High, Low)
+      data$Date <- as.Date(data$Date, origin = "1899-12-30")
+      data <- na.omit(data)
       
-      if (nrow(data) < dataCheck) {
-        message(paste("Skip:", name, "- after NA removal:", nrow(data), "rows"))
+      if (nrow(data) <= dataCheck) {
+        message(paste("  SKIP: Insufficient data (", nrow(data), "rows)"))
         next
       }
       
-      # 基础指标计算
-      data$Return <- c(NA, diff(data$Last) / head(data$Last, -1))
-      data$LogReturn <- c(NA, diff(log(data$Last)))
+      # 核心计算 - 完全匹配原始代码
+      data <- data %>%
+        mutate(
+          LastHistRank = percent_rank(Last),
+          LastRollRank = slider::slide_dbl(Last, percent_rank, .before = RollWindow - 1, .complete = TRUE)
+        ) %>%
+        mutate(
+          Range = High - Low,
+          RangePerc = Range / lag(Last),
+          Return = Last / lag(Last) - 1
+        ) %>%
+        mutate(
+          HistMax = cummax(High),
+          HistMin = cummin(Low)
+        ) %>%
+        mutate(
+          ToHistMax = (HistMax - Last) / Last,
+          ToHistMin = (HistMin - Last) / Last,
+          HistDrawDown = (Last - HistMax) / HistMax,
+          HistDrawDownHistRank = percent_rank(HistDrawDown),
+          HistDrawDownRollRank = slider::slide_dbl(HistDrawDown, percent_rank, .before = RollWindow - 1, .complete = TRUE),
+          HistDrawUp = (Last - HistMin) / HistMin,
+          HistDrawUpHistRank = percent_rank(HistDrawUp),
+          HistDrawUpRollRank = slider::slide_dbl(HistDrawUp, percent_rank, .before = RollWindow - 1, .complete = TRUE)
+        )
       
-      # 移动平均线
-      for (ma in maParameters) {
-        data[[paste0("MA", ma)]] <- EMA(data$Last, n = ma)
+      # ATR和波动率
+      data <- data %>%
+        mutate(
+          ATR = zoo::rollapply(Range, ATRCalWindow, mean, fill = NA, align = "right"),
+          ATRPerc = zoo::rollapply(RangePerc, ATRCalWindow, mean, fill = NA, align = "right"),
+          DVol = zoo::rollapply(Return, VolCalWindow, sd, fill = NA, align = "right")
+        )
+      
+      # VaR
+      data$LongVaRPerc <- zoo::rollapply(data$Return, VaRCalWindow, 
+                                         function(x) quantile(x, extremeCut[1], na.rm = TRUE), 
+                                         fill = NA, align = "right")
+      data$ShortVaRPerc <- zoo::rollapply(data$Return, VaRCalWindow, 
+                                          function(x) quantile(x, extremeCut[2], na.rm = TRUE), 
+                                          fill = NA, align = "right")
+      
+      # 排名计算
+      data <- data %>%
+        mutate(
+          RangePercHistRank = percent_rank(RangePerc),
+          RangePercRollRank = slider::slide_dbl(RangePerc, percent_rank, .before = RollWindow - 1, .complete = TRUE),
+          ATRPercHistRank = percent_rank(ATRPerc),
+          ATRPercRollRank = slider::slide_dbl(ATRPerc, percent_rank, .before = RollWindow - 1, .complete = TRUE),
+          DVolHistRank = percent_rank(DVol),
+          DVolRollRank = slider::slide_dbl(DVol, percent_rank, .before = RollWindow - 1, .complete = TRUE)
+        )
+      
+      # RollMax/Min
+      data <- data %>%
+        mutate(
+          RollMax = zoo::rollapply(High, RollWindow, max, fill = NA, align = "right"),
+          RollMin = zoo::rollapply(Low, RollWindow, min, fill = NA, align = "right")
+        ) %>%
+        mutate(
+          RollDrawDown = Last / RollMax - 1,
+          RollDrawUp = Last / RollMin - 1,
+          RollDrawDownHistRank = percent_rank(RollDrawDown),
+          RollDrawDownRollRank = slider::slide_dbl(RollDrawDown, percent_rank, .before = RollWindow - 1, .complete = TRUE),
+          RollDrawUpHistRank = percent_rank(RollDrawUp),
+          RollDrawUpRollRank = slider::slide_dbl(RollDrawUp, percent_rank, .before = RollWindow - 1, .complete = TRUE)
+        )
+      
+      # 移动平均 - 使用原始命名
+      data <- data %>%
+        mutate(
+          EMA5 = maFun(Last, n = maParameters[1]),
+          EMA21 = maFun(Last, n = maParameters[2]),
+          EMA89 = maFun(Last, n = maParameters[3]),
+          EMA144 = maFun(Last, n = maParameters[4])
+        ) %>%
+        mutate(
+          EMADev5 = Last / EMA5 - 1,
+          EMADev21 = Last / EMA21 - 1,
+          EMADev89 = Last / EMA89 - 1,
+          EMADev144 = Last / EMA144 - 1,
+          EMA_MADev_5_21 = EMA5 / EMA21 - 1,
+          EMADev89HistRank = percent_rank(EMADev89),
+          EMADev89RollRank = slider::slide_dbl(EMADev89, percent_rank, .before = RollWindow - 1, .complete = TRUE)
+        )
+      
+      # 收益率和Sigma - 完全匹配原始
+      for (j in 1:length(ChgPeriod)) {
+        period <- ChgPeriod[j]
+        chg_col <- paste0("Chg", period, "DPerc")
+        sigma_col <- paste0("Sigma", period, "D")
+        
+        data[[chg_col]] <- c(rep(NA, period), diff(data$Last, period) / lag(data$Last, period)[(period + 1):nrow(data)])
+        data[[sigma_col]] <- data[[chg_col]] / (data$DVol * sqrt(period))
       }
       
-      # 偏差计算
-      data$Dev5 <- data$Last / data$MA5 - 1
-      data$Dev21 <- data$Last / data$MA21 - 1
-      data$Dev89 <- data$Last / data$MA89 - 1
-      data$Dev144 <- data$Last / data$MA144 - 1
+      # 选择输出列 - 完全匹配原始
+      output_cols <- c("Date", "Last", "High", "Low", "Return",
+                       "Range", "RangePerc", "ATR", "ATRPerc", "DVol",
+                       "LongVaRPerc", "ShortVaRPerc",
+                       "RangePercHistRank", "RangePercRollRank",
+                       "ATRPercHistRank", "ATRPercRollRank",
+                       "DVolHistRank", "DVolRollRank",
+                       "LastHistRank", "LastRollRank",
+                       "EMA5", "EMA21", "EMA89", "EMA144",
+                       "EMADev5", "EMADev21", "EMADev89", "EMADev144", "EMA_MADev_5_21",
+                       "EMADev89HistRank", "EMADev89RollRank",
+                       "HistMax", "HistMin", "ToHistMax", "ToHistMin",
+                       "HistDrawDown", "HistDrawUp",
+                       "HistDrawDownHistRank", "HistDrawDownRollRank", "HistDrawUpHistRank", "HistDrawUpRollRank",
+                       "RollMax", "RollMin",
+                       "RollDrawDown", "RollDrawUp",
+                       "RollDrawDownHistRank", "RollDrawDownRollRank", "RollDrawUpHistRank", "RollDrawUpRollRank")
       
-      # 波动率
-      data$Range <- data$High - data$Low
-      data$ATR <- zoo::rollapply(data$Range, ATRCalWindow, mean, fill = NA, align = "right")
-      data$DVol <- zoo::rollapply(data$Return, VolCalWindow, sd, fill = NA, align = "right")
-      data$AnnualVol <- data$DVol * sqrt(252)
-      
-      # 收益率计算
+      # 添加Chg和Sigma列
       for (period in ChgPeriod) {
-        data[[paste0("Chg", period)]] <- calc_roc(data$Last, period)
+        output_cols <- c(output_cols, paste0("Chg", period, "DPerc"), paste0("Sigma", period, "D"))
       }
       
-      # RSI
-      data$RSI <- RSI(data$Last, n = 14)
+      # 确保所有列都存在
+      for (col in output_cols) {
+        if (!(col %in% names(data))) {
+          data[[col]] <- NA
+        }
+      }
       
-      # MACD
-      macd <- MACD(data$Last, nFast = 12, nSlow = 26, nSig = 9)
-      data$MACD <- macd[, "macd"]
-      data$MACDsignal <- macd[, "signal"]
-      data$MACDhist <- macd[, "macd"] - macd[, "signal"]
+      data <- data[, output_cols]
       
-      # 布林带
-      bb <- BBands(data$Last, n = 20, sd = 2)
-      data$BBdn <- bb[, "dn"]
-      data$BBmavg <- bb[, "mavg"]
-      data$BBup <- bb[, "up"]
-      data$BBpctB <- bb[, "pctB"]
-      
-      # 成交量指标
-      data$VolMA20 <- zoo::rollapply(data$Volume, 20, mean, fill = NA, align = "right")
-      data$VolRatio <- data$Volume / data$VolMA20
-      
-      # 高低点
-      data$HH20 <- zoo::rollapply(data$High, 20, max, fill = NA, align = "right")
-      data$LL20 <- zoo::rollapply(data$Low, 20, min, fill = NA, align = "right")
-      data$HH60 <- zoo::rollapply(data$High, 60, max, fill = NA, align = "right")
-      data$LL60 <- zoo::rollapply(data$Low, 60, min, fill = NA, align = "right")
-      
-      # 分位数排名
-      data$PctRankVol <- run_pct_rank(data$DVol, 250)
-      data$PctRankRSI <- run_pct_rank(data$RSI, 250)
-      data$PctRankDev89 <- run_pct_rank(abs(data$Dev89), 250)
-      
-      # 信号生成
-      data$LongSignal <- ifelse(data$Dev89 < -0.15 & data$RSI < 40, 1, 0)
-      data$ShortSignal <- ifelse(data$Dev89 > 0.15 & data$RSI > 60, 1, 0)
-      data$HighVolSignal <- ifelse(data$PctRankVol > 0.85, 1, 0)
-      data$LowVolSignal <- ifelse(data$PctRankVol < 0.15, 1, 0)
-      
-      # 趋势转换
-      data$UpToDown <- ifelse(lag(data$Last) > lag(data$MA21) & data$Last < data$MA21, 1, 0)
-      data$DownToUp <- ifelse(lag(data$Last) < lag(data$MA21) & data$Last > data$MA21, 1, 0)
-      
+      # 保存
       write.xlsx(data, file.path(DATA_ANALYSIS_DIR, paste0(name, "_DataAnalysis.xlsx")), overwrite = TRUE)
-      message(paste("Analyzed:", name))
+      message(paste("  SAVED:", name, "_DataAnalysis.xlsx"))
       
     }, error = function(e) {
-      message(paste("Error analyzing", name, ":", conditionMessage(e)))
+      message(paste("  ERROR analyzing", name, ":", conditionMessage(e)))
     })
   }
-  
-  message("Analysis completed!")
 }
 
 # =============================================================================
-# Data Report - 完整版（恢复所有原始字段）
+# Data Report - 完全还原原始版本
 # =============================================================================
 
 DataReport <- function(tickers) {
-  message("Generating comprehensive report...")
-  results <- list()
+  message("Generating report...")
   
-  for (name in tickers$name) {
-    file <- file.path(DATA_ANALYSIS_DIR, paste0(name, "_DataAnalysis.xlsx"))
-    if (!file.exists(file)) {
-      message(paste("File not found:", file))
+  # 获取列名模板 - 使用BTCUSD作为模板
+  template_file <- file.path(DATA_ANALYSIS_DIR, "BTCUSD_DataAnalysis.xlsx")
+  if (!file.exists(template_file)) {
+    # 如果BTCUSD不存在，使用第一个可用的文件
+    available_files <- list.files(DATA_ANALYSIS_DIR, pattern = "_DataAnalysis.xlsx$", full.names = TRUE)
+    if (length(available_files) == 0) {
+      message("ERROR: No DataAnalysis files found")
+      return()
+    }
+    template_file <- available_files[1]
+  }
+  
+  template_data <- read.xlsx(template_file)
+  fields <- colnames(template_data)[-1]  # 排除Date列
+  
+  # 创建结果数据框
+  results <- data.frame(matrix(nrow = 0, ncol = length(fields) + 1))
+  colnames(results) <- c("Name", fields)
+  
+  # 获取每个品种的最新数据
+  for (i in 1:nrow(tickers)) {
+    name <- tickers$name[i]
+    message(paste("Report - Fetching:", name))
+    
+    file_path <- file.path(DATA_ANALYSIS_DIR, paste0(name, "_DataAnalysis.xlsx"))
+    if (!file.exists(file_path)) {
+      message(paste("  SKIP: File not found"))
       next
     }
     
     tryCatch({
-      data <- read.xlsx(file)
+      data <- read.xlsx(file_path)
       if (nrow(data) == 0) {
-        message(paste("Empty data for:", name))
+        message(paste("  SKIP: Empty data"))
         next
       }
       
-      # 获取最后一行数据
-      last <- tail(data, 1)
+      # 获取最后一行（排除Date列）
+      last_row <- data[nrow(data), -1]
       
-      # 构建完整的结果行（匹配原始报告格式）
-      result <- data.frame(
-        # 基础信息
-        Name = name,
-        Ticker = tickers$ticker[tickers$name == name],
-        
-        # 价格数据
-        Last = safe_last(data$Last),
-        Open = safe_last(data$Open),
-        High = safe_last(data$High),
-        Low = safe_last(data$Low),
-        
-        # 收益指标
-        Return = safe_last(data$Return),
-        LogReturn = safe_last(data$LogReturn),
-        Chg5 = safe_last(data$Chg5),
-        Chg20 = safe_last(data$Chg20),
-        Chg60 = safe_last(data$Chg60),
-        Chg120 = safe_last(data$Chg120),
-        Chg180 = safe_last(data$Chg180),
-        Chg250 = safe_last(data$Chg250),
-        
-        # 移动平均线
-        MA5 = safe_last(data$MA5),
-        MA21 = safe_last(data$MA21),
-        MA89 = safe_last(data$MA89),
-        MA144 = safe_last(data$MA144),
-        
-        # 偏差
-        Dev5 = safe_last(data$Dev5),
-        Dev21 = safe_last(data$Dev21),
-        Dev89 = safe_last(data$Dev89),
-        Dev144 = safe_last(data$Dev144),
-        
-        # 波动率
-        DVol = safe_last(data$DVol),
-        AnnualVol = safe_last(data$AnnualVol),
-        ATR = safe_last(data$ATR),
-        
-        # 技术指标
-        RSI = safe_last(data$RSI),
-        MACD = safe_last(data$MACD),
-        MACDsignal = safe_last(data$MACDsignal),
-        MACDhist = safe_last(data$MACDhist),
-        
-        # 布林带
-        BBdn = safe_last(data$BBdn),
-        BBmavg = safe_last(data$BBmavg),
-        BBup = safe_last(data$BBup),
-        BBpctB = safe_last(data$BBpctB),
-        
-        # 成交量
-        Volume = safe_last(data$Volume),
-        VolMA20 = safe_last(data$VolMA20),
-        VolRatio = safe_last(data$VolRatio),
-        
-        # 高低点
-        HH20 = safe_last(data$HH20),
-        LL20 = safe_last(data$LL20),
-        HH60 = safe_last(data$HH60),
-        LL60 = safe_last(data$LL60),
-        
-        # 分位数
-        PctRankVol = safe_last(data$PctRankVol),
-        PctRankRSI = safe_last(data$PctRankRSI),
-        PctRankDev89 = safe_last(data$PctRankDev89),
-        
-        # 信号
-        Long = safe_last(data$LongSignal),
-        Short = safe_last(data$ShortSignal),
-        HighVol = safe_last(data$HighVolSignal),
-        LowVol = safe_last(data$LowVolSignal),
-        UpToDown = safe_last(data$UpToDown),
-        DownToUp = safe_last(data$DownToUp),
-        
-        # 日期
-        Date = safe_last(data$Date),
-        
-        stringsAsFactors = FALSE
-      )
-      
-      results[[name]] <- result
-      message(paste("Added to report:", name))
+      # 添加到结果
+      new_row <- c(name, as.list(last_row))
+      results[nrow(results) + 1, ] <- new_row
+      message(paste("  ADDED:", name))
       
     }, error = function(e) {
-      message(paste("Error processing", name, ":", conditionMessage(e)))
+      message(paste("  ERROR:", name, conditionMessage(e)))
     })
   }
   
-  if (length(results) > 0) {
-    report <- do.call(rbind, results)
-    
-    # 添加元数据列（匹配原始报告格式）
-    report$`微信公众号【TraderX-Flow】` <- "TraderX-Flow"
-    
-    # 重新排列列顺序
-    col_order <- c("微信公众号【TraderX-Flow】", "Name", "Ticker", "Date", 
-                   "Last", "Open", "High", "Low",
-                   "Return", "LogReturn", "Chg5", "Chg20", "Chg60", "Chg120", "Chg180", "Chg250",
-                   "MA5", "MA21", "MA89", "MA144",
-                   "Dev5", "Dev21", "Dev89", "Dev144",
-                   "DVol", "AnnualVol", "ATR",
-                   "RSI", "MACD", "MACDsignal", "MACDhist",
-                   "BBdn", "BBmavg", "BBup", "BBpctB",
-                   "Volume", "VolMA20", "VolRatio",
-                   "HH20", "LL20", "HH60", "LL60",
-                   "PctRankVol", "PctRankRSI", "PctRankDev89",
-                   "Long", "Short", "HighVol", "LowVol", "UpToDown", "DownToUp")
-    
-    # 确保所有列都存在
-    for (col in col_order) {
-      if (!col %in% names(report)) {
-        report[[col]] <- NA
-      }
-    }
-    
-    report <- report[, col_order]
-    
-    output_file <- file.path(OUTPUT_DIR, paste0(eDate, "_AnalysisReport.xlsx"))
-    write.xlsx(report, output_file, overwrite = TRUE)
-    message(paste("Comprehensive report generated:", nrow(report), "instruments"))
-    message(paste("Total columns:", ncol(report)))
-  } else {
-    message("No data for report")
+  # 转换数值列
+  for (i in 2:ncol(results)) {
+    results[, i] <- as.numeric(as.character(results[, i]))
   }
+  
+  # 移除NA行
+  results <- na.omit(results)
+  
+  # 保存plain版本
+  write.xlsx(results, file.path(OUTPUT_DIR, paste0(eDate, "_AnalysisReport_plain.xlsx")), overwrite = TRUE)
+  write.csv(results, file.path(OUTPUT_DIR, paste0(eDate, "_AnalysisReport_plain.csv")), row.names = FALSE)
+  
+  # 使用模板生成formal版本
+  template_wb <- file.path(INPUT_DIR, "template_AnalysisReport.xlsx")
+  if (file.exists(template_wb)) {
+    wb <- loadWorkbook(template_wb)
+    writeData(wb, sheet = 1, x = results, startRow = 4, startCol = 1, colNames = FALSE)
+    saveWorkbook(wb, file.path(OUTPUT_DIR, "AnalysisReport_formal.xlsx"), overwrite = TRUE)
+    message("Formal report saved: AnalysisReport_formal.xlsx")
+  } else {
+    message("WARNING: template_AnalysisReport.xlsx not found, using plain version")
+    write.xlsx(results, file.path(OUTPUT_DIR, "AnalysisReport_formal.xlsx"), overwrite = TRUE)
+  }
+  
+  message(paste("Report completed:", nrow(results), "instruments"))
 }
 
 # =============================================================================
-# Data Visualization - 修复版
+# Data Visualization - 简化版（确保兼容性）
 # =============================================================================
 
 DataVisualization <- function(tickers) {
   message("Creating charts...")
   
-  for (name in tickers$name) {
-    file <- file.path(DATA_ANALYSIS_DIR, paste0(name, "_DataAnalysis.xlsx"))
-    if (!file.exists(file)) {
-      message(paste("Analysis file not found:", name))
+  for (i in 1:nrow(tickers)) {
+    name <- tickers$name[i]
+    message(paste("Chart:", name))
+    
+    file_path <- file.path(DATA_ANALYSIS_DIR, paste0(name, "_DataAnalysis.xlsx"))
+    if (!file.exists(file_path)) {
+      message(paste("  SKIP: File not found"))
       next
     }
     
     tryCatch({
-      Data <- read.xlsx(file)
-      Data$Date <- as.Date(Data$Date)
-      Data <- Data %>% filter(!is.na(Last), !is.na(Date))
+      Data <- read.xlsx(file_path)
+      Data$Date <- as.Date(Data$Date, origin = "1899-12-30")
+      Data <- Data %>% filter(!is.na(Last))
       
       if (nrow(Data) < 30) {
-        message(paste("Skip chart:", name, "- insufficient data"))
+        message(paste("  SKIP: Insufficient data"))
         next
       }
       
-      # 获取最后180天的数据用于显示
-      display_data <- tail(Data, 180)
+      # 简化版图表 - 只创建价格图表（确保兼容性）
+      p <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
+        add_trace(x = ~Date, y = ~Last, name = paste("Last:", round(tail(Data$Last, 1), 2)),
+                  line = list(color = "black", width = 1)) %>%
+        layout(title = list(text = paste(eDate, "|", name, "|Price@", head, sep = ""),
+                            font = list(size = 15)),
+               xaxis = list(title = ""),
+               yaxis = list(title = "Price"),
+               annotations = list(source_annotation))
       
-      # 创建交互式图表
-      p <- plot_ly(display_data, type = "scatter", mode = "lines")
-      
-      # 主价格线
-      p <- p %>% add_trace(x = ~Date, y = ~Last, name = "Price", 
-                           line = list(color = "black", width = 1.5))
-      
-      # 移动平均线
-      if (any(!is.na(display_data$MA5))) {
-        p <- p %>% add_trace(x = ~Date, y = ~MA5, name = "MA5", 
-                             line = list(color = "blue", width = 1))
-      }
-      if (any(!is.na(display_data$MA21))) {
-        p <- p %>% add_trace(x = ~Date, y = ~MA21, name = "MA21", 
-                             line = list(color = "orange", width = 1))
-      }
-      if (any(!is.na(display_data$MA89))) {
-        p <- p %>% add_trace(x = ~Date, y = ~MA89, name = "MA89", 
-                             line = list(color = "red", width = 1.5))
-      }
-      
-      # 布林带
-      if (any(!is.na(display_data$BBup))) {
-        p <- p %>% add_trace(x = ~Date, y = ~BBup, name = "BB Upper",
-                             line = list(color = "gray", width = 0.5, dash = "dash"))
-      }
-      if (any(!is.na(display_data$BBdn))) {
-        p <- p %>% add_trace(x = ~Date, y = ~BBdn, name = "BB Lower",
-                             line = list(color = "gray", width = 0.5, dash = "dash"))
-      }
-      
-      # 布局
-      p <- p %>% layout(
-        title = list(text = paste(name, "Technical Analysis"), font = list(size = 16)),
-        xaxis = list(title = "Date", showgrid = TRUE),
-        yaxis = list(title = "Price", showgrid = TRUE),
-        legend = list(orientation = "h", y = -0.2),
-        hovermode = "x unified"
-      )
-      
-      # 保存为自包含HTML（确保可以离线打开）
-      html_file <- file.path(CHARTING_DIR, paste0(Sys.Date(), "_", name, ".html"))
-      htmlwidgets::saveWidget(p, html_file, selfcontained = TRUE, libdir = NULL)
-      message(paste("Chart saved:", html_file))
+      # 保存
+      html_file <- file.path(CHARTING_DIR, paste0(eDate, "_", name, ".html"))
+      htmlwidgets::saveWidget(p, html_file, selfcontained = TRUE)
+      message(paste("  SAVED:", html_file))
       
     }, error = function(e) {
-      message(paste("Chart error:", name, "-", conditionMessage(e)))
+      message(paste("  ERROR:", name, conditionMessage(e)))
     })
   }
   
@@ -507,10 +460,11 @@ DataVisualization <- function(tickers) {
 
 main <- function() {
   message("============================================")
-  message("Cloud Market Analytics Pipeline - Full Version")
+  message("Market Analytics Pipeline")
   message(paste("Date:", eDate))
   message("============================================")
   
+  # 读取品种列表
   tickers_file <- file.path(INPUT_DIR, "tickers_macro.xlsx")
   if (!file.exists(tickers_file)) {
     message("FATAL ERROR: tickers_macro.xlsx not found!")
@@ -520,16 +474,20 @@ main <- function() {
   instruments <- read.xlsx(tickers_file)
   message(paste("Loaded", nrow(instruments), "instruments"))
   
+  # 下载数据
   message("\nStep 1/4: Downloading data...")
   yahooDownload(instruments, sDate, eDate)
   
+  # 数据分析
   message("\nStep 2/4: Analyzing data...")
   DataAnalysis(instruments)
   
-  message("\nStep 3/4: Generating comprehensive report...")
+  # 生成报告
+  message("\nStep 3/4: Generating report...")
   DataReport(instruments)
   
-  message("\nStep 4/4: Creating visualizations...")
+  # 创建图表
+  message("\nStep 4/4: Creating charts...")
   DataVisualization(instruments)
   
   message("\n============================================")
@@ -537,4 +495,5 @@ main <- function() {
   message("============================================")
 }
 
+# 运行
 main()

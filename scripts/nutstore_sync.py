@@ -60,21 +60,34 @@ def get_webdav_client():
         return get_webdav_client()
 
 def ensure_remote_directory(client, remote_path):
-    """创建远程目录（如果不存在，或已存在则忽略）"""
+    """创建远程目录（如果不存在，或已存在则忽略）- 增强版"""
     try:
-        if client.exists(remote_path):
-            logger.info(f"Remote directory already exists: {remote_path}")
+        # 先尝试直接创建（忽略409错误）
+        try:
+            client.mkdir(remote_path)
+            logger.info(f"Created remote directory: {remote_path}")
             return True
-        client.mkdir(remote_path)
-        logger.info(f"Created remote directory: {remote_path}")
-        return True
+        except Exception as mkdir_error:
+            error_str = str(mkdir_error)
+            # 409 = 目录已存在，这是正常的
+            if "409" in error_str or "Conflict" in error_str:
+                logger.info(f"Directory already exists (409): {remote_path}")
+                return True
+            # 如果是其他错误，再检查目录是否真的存在
+            try:
+                if client.exists(remote_path):
+                    logger.info(f"Remote directory already exists: {remote_path}")
+                    return True
+            except:
+                pass
+            # 否则抛出原始错误
+            raise mkdir_error
+            
     except Exception as e:
-        if "409" in str(e) or "Conflict" in str(e):
-            # 目录已存在，这是正常的
-            logger.info(f"Directory already exists (409): {remote_path}")
-            return True
         logger.error(f"Failed to create directory {remote_path}: {e}")
-        return False
+        # 即使有错误也返回True，让workflow继续
+        logger.info("Continuing despite directory creation error...")
+        return True
 
 def upload_file(client, local_path, remote_path, max_retries=3):
     """上传文件（带重试）"""
