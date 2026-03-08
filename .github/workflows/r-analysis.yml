@@ -1,22 +1,12 @@
 name: R Analysis Pipeline
 
 on:
-  # 定时触发：每个工作日 9:00 AM CST (UTC+8)
   schedule:
-    - cron: '0 1 * * 1-5'  # UTC 1:00 = CST 9:00
-  
-  # 手动触发
+    - cron: '0 1 * * 1-5'
   workflow_dispatch:
-    inputs:
-      analysis_date:
-        description: 'Analysis Date (YYYY-MM-DD, leave empty for today)'
-        required: false
-        default: ''
-  
-  # Push到main分支时触发
   push:
     branches:
-      - main
+      - master
     paths:
       - 'input/**'
       - 'MarketAnalytics_cloud.R'
@@ -34,17 +24,14 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    # 1. 检出代码
     - name: Checkout Repository
       uses: actions/checkout@v4
       
-    # 2. 设置R环境
     - name: Setup R
       uses: r-lib/actions/setup-r@v2
       with:
         r-version: '4.3.0'
         
-    # 3. 设置系统依赖
     - name: Install System Dependencies
       run: |
         sudo apt-get update
@@ -57,43 +44,22 @@ jobs:
           libfreetype6-dev \
           libpng-dev \
           libtiff5-dev \
-          libjpeg-dev \
-          libgit2-dev \
-          libgdal-dev \
-          libgeos-dev \
-          libproj-dev \
-          libudunits2-dev \
-          libglpk-dev \
-          libgmp3-dev \
-          libmpfr-dev
+          libjpeg-dev
           
-    # 4. 设置Python（用于坚果云同步）
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
         
-    # 5. 安装Python依赖
     - name: Install Python Dependencies
       run: |
-        pip install webdav4 requests pandas
+        pip install webdav4 requests
         
-    # 6. 设置R依赖缓存
-    - name: Cache R Packages
-      uses: actions/cache@v3
-      with:
-        path: ~/R/x86_64-pc-linux-gnu-library/
-        key: r-packages-${{ hashFiles('**/renv.lock') }}
-        restore-keys: |
-          r-packages-
-          
-    # 7. 运行R分析脚本
     - name: Run R Analysis
       run: |
         Rscript MarketAnalytics_cloud.R
-      timeout-minutes: 30
+      timeout-minutes: 60
       
-    # 8. 上传产物到GitHub（临时存储）
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       if: always()
@@ -107,15 +73,7 @@ jobs:
           output/charting/**/*.html
         retention-days: 7
         
-    # 9. 同步到坚果云
-    - name: Sync to Nutstore (WebDAV)
+    - name: Sync to Nutstore
       if: env.NUTSTORE_USER != '' && env.NUTSTORE_PASSWORD != ''
       run: |
         python scripts/nutstore_sync.py
-      
-    # 10. 发送通知（可选）
-    - name: Send Notification
-      if: failure()
-      run: |
-        echo "Analysis failed! Check logs for details."
-        cat output/analysis.log || true
