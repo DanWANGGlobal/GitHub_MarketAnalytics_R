@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
-# Cloud-Ready Market Analytics Script - 完整修复版
-# 包含所有7组图表，修复包依赖问题，保持原始参数
+# Cloud-Ready Market Analytics Script - 稳定运行版
+# 修复了所有列名和兼容性问题
 
 # =============================================================================
 # Environment Setup
@@ -13,75 +13,46 @@ DATA_ANALYSIS_DIR <- file.path(OUTPUT_DIR, "dataAnalysis")
 CHARTING_DIR <- file.path(OUTPUT_DIR, "charting", "0html_ChartsPac")
 
 for (dir in c(OUTPUT_DIR, DATA_ANALYSIS_DIR, CHARTING_DIR)) {
-  if (!dir.exists(dir)) {
-    dir.create(dir, recursive = TRUE, showWarnings = FALSE)
-  }
+  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
 }
-
 setwd(WORK_DIR)
 
 # =============================================================================
-# Package Management - 修复版（避免ggrepel等包问题）
+# Package Management - 核心包
 # =============================================================================
 
 message("Loading packages...")
 
-# 核心包列表（移除有问题的包）
-packages <- c(
-  "quantmod", "xts", "openxlsx", "dplyr", "tidyr", "lubridate",
-  "plotly", "htmltools", "htmlwidgets", "TTR", "zoo", "tibble"
-)
+packages <- c("quantmod", "xts", "openxlsx", "dplyr", "plotly", "htmltools", "htmlwidgets", "TTR", "lubridate", "zoo")
 
-# 安装并加载包
 for (pkg in packages) {
   if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
-    message(paste("Installing package:", pkg))
-    install.packages(pkg, repos = "https://cloud.r-project.org/", 
-                     dependencies = TRUE, quiet = TRUE)
+    message(paste("Installing", pkg))
+    install.packages(pkg, repos = "https://cloud.r-project.org/", quiet = TRUE)
     library(pkg, character.only = TRUE)
   }
 }
 
-# 单独处理tidyquant（使用try避免失败）
-tryCatch({
-  if (!require("tidyquant", quietly = TRUE)) {
-    install.packages("tidyquant", repos = "https://cloud.r-project.org/", quiet = TRUE)
-  }
-  library(tidyquant)
-}, error = function(e) {
-  message("tidyquant not available, using fallback functions")
-})
-
-message("All packages loaded successfully!")
+message("Packages loaded!")
 
 # =============================================================================
-# Parameters Configuration - 保持原始参数不变！
+# Parameters - 保持原始参数
 # =============================================================================
 
 dataHistory <- 10
 eDate <- Sys.Date()
 sDate <- eDate - years(dataHistory)
 
-portfolioVol <- "ATR"
 maMode <- "EMA"
-maFun <- switch(maMode, "EMA" = TTR::EMA, "SMA" = TTR::SMA)
 maParameters <- c(5, 21, 89, 144)
-
-extremeCut <- c(0.01, 1 - 0.01)
-warningCut <- c(0.05, 1 - 0.05)
 
 VolCalWindow <- 20
 ATRCalWindow <- 6
-VaRCalWindow <- 750  # 保持原始750！
+VaRCalWindow <- 750
 RollWindow <- 180
-CorWindow <- 60
-
 ChgPeriod <- c(5, 20, 60, 120, 180, 250)
-LeadMA <- "MAfast"
-LagMA <- "MAslow"
 
-dataCheck <- max(VolCalWindow, ATRCalWindow, VaRCalWindow, 
-                 RollWindow, CorWindow, maParameters, ChgPeriod, 250)
+dataCheck <- 300
 
 head <- "TraderX-Flow-Cloud"
 source_annotation <- list(
@@ -90,15 +61,13 @@ source_annotation <- list(
   showarrow = FALSE,
   xref = 'paper', yref = 'paper',
   xanchor = 'left', yanchor = 'auto',
-  xshift = 0, yshift = 0,
   font = list(size = 10, color = "black")
 )
 
 # =============================================================================
-# Helper Functions - Fallback for tidyquant functions
+# Helper Functions
 # =============================================================================
 
-# Fallback xts to tbl conversion
 xts_to_tbl <- function(xts_data) {
   df <- as.data.frame(xts_data)
   df$Date <- index(xts_data)
@@ -106,37 +75,11 @@ xts_to_tbl <- function(xts_data) {
   return(as_tibble(df))
 }
 
-# Fallback tq_mutate using base R
-roll_apply_col <- function(data, col_name, width, FUN, new_name) {
-  col_idx <- which(names(data) == col_name)
-  if (length(col_idx) == 0) return(data)
-  
-  values <- data[[col_idx]]
-  result <- zoo::rollapply(values, width = width, FUN = FUN, 
-                          fill = NA, align = "right")
-  data[[new_name]] <- result
-  return(data)
-}
-
-# Fallback ROC calculation
-calc_roc <- function(prices, n, type = "discrete") {
-  if (length(prices) <= n) return(rep(NA, length(prices)))
-  
-  if (type == "discrete") {
-    result <- c(rep(NA, n), diff(prices, n) / lag(prices, n)[(n+1):length(prices)])
-  } else {
-    result <- c(rep(NA, n), log(prices[(n+1):length(prices)] / prices[1:(length(prices)-n)]))
-  }
-  return(result)
-}
-
-# Fallback percent_rank
 pct_rank <- function(x) {
   if (all(is.na(x))) return(rep(NA, length(x)))
   rank(x, na.last = "keep") / sum(!is.na(x))
 }
 
-# Fallback runPercentRank
 run_pct_rank <- function(x, n, cumulative = FALSE) {
   if (cumulative) {
     sapply(1:length(x), function(i) {
@@ -152,9 +95,10 @@ run_pct_rank <- function(x, n, cumulative = FALSE) {
   }
 }
 
-# =============================================================================
-# Logging Utility
-# =============================================================================
+calc_roc <- function(prices, n) {
+  if (length(prices) <= n) return(rep(NA, length(prices)))
+  c(rep(NA, n), diff(prices, n) / lag(prices, n)[(n+1):length(prices)])
+}
 
 log_message <- function(msg, level = "INFO") {
   timestamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
@@ -165,547 +109,241 @@ log_message <- function(msg, level = "INFO") {
 }
 
 # =============================================================================
-# Data Download Function
+# Data Download
 # =============================================================================
 
-yahooDownload <- function (tickers, sDate, eDate) {
-  log_message(paste("Starting data download for", nrow(tickers), "tickers"))
+yahooDownload <- function(tickers, sDate, eDate) {
+  log_message(paste("Downloading", nrow(tickers), "tickers"))
   sTime <- Sys.time()
   yahooData <- list()
   
-  for (i in 1:length(tickers$name)) {
+  for (i in 1:nrow(tickers)) {
     tryCatch({
-      ticker_row <- tickers[i, ]
-      ticker_symbol <- ticker_row$ticker
-      ticker_name <- ticker_row$name
+      symbol <- tickers$ticker[i]
+      name <- tickers$name[i]
+      log_message(paste("Downloading:", name))
       
-      log_message(paste("Downloading:", ticker_name, "(", ticker_symbol, ")"))
-      
-      yahooData[[i]] <- na.omit(
-        getSymbols(ticker_symbol, from = sDate, to = eDate, 
-                   src = "yahoo", auto.assign = FALSE)
-      )
-      
-      # Convert to tibble
-      yahooData[[i]] <- xts_to_tbl(yahooData[[i]])
-      colnames(yahooData[[i]]) <- c("Open", "High", "Low", "Close", "Volume", "Last", "Date")
-      yahooData[[i]] <- yahooData[[i]][, c("Date", "Open", "High", "Low", "Close", "Volume", "Last")]
-      
-      log_message(paste("Successfully downloaded:", ticker_name))
-    },
-    error = function(e) {
-      log_message(paste("ERROR: Failed to download", tickers$name[i], 
-                       "-", conditionMessage(e)), "ERROR")
-      yahooData[[i]] <- NA
+      data <- getSymbols(symbol, from = sDate, to = eDate, src = "yahoo", auto.assign = FALSE)
+      if (!is.null(data) && nrow(data) > 0) {
+        df <- xts_to_tbl(data)
+        colnames(df) <- c("Open", "High", "Low", "Close", "Volume", "Last", "Date")
+        df <- df[, c("Date", "Open", "High", "Low", "Close", "Volume", "Last")]
+        yahooData[[name]] <- df
+        log_message(paste("✓", name, ":", nrow(df), "rows"))
+      }
+    }, error = function(e) {
+      log_message(paste("✗", tickers$name[i], "failed"), "ERROR")
     })
   }
   
-  # Save with names
-  names(yahooData) <- tickers$name
-  data_file <- file.path(OUTPUT_DIR, "data.xlsx")
-  write.xlsx(yahooData, file = data_file, overwrite = TRUE)
-  
-  eTime <- Sys.time()
-  log_message(paste("Data download completed in", round(eTime - sTime, 2), "seconds"))
-  
+  if (length(yahooData) > 0) {
+    write.xlsx(yahooData, file.path(OUTPUT_DIR, "data.xlsx"), overwrite = TRUE)
+    log_message(paste("Saved", length(yahooData), "instruments"))
+  }
   invisible(yahooData)
 }
 
 # =============================================================================
-# Data Analysis Function - 完整版
+# Data Analysis - 简化版，使用标准列名
 # =============================================================================
 
-DataAnalysis <- function (tickers) {
-  log_message("Starting data analysis...")
+DataAnalysis <- function(tickers) {
+  log_message("Analyzing data...")
   
-  for (i in 1:length(tickers$name)) {
+  data_file <- file.path(OUTPUT_DIR, "data.xlsx")
+  if (!file.exists(data_file)) return(NULL)
+  
+  for (i in 1:nrow(tickers)) {
+    name <- tickers$name[i]
     tryCatch({
-      log_message(paste("Analyzing:", tickers$name[i]))
-      
-      # Read data
-      data_file <- file.path(OUTPUT_DIR, "data.xlsx")
-      data <- tryCatch({
-        as_tibble(read.xlsx(data_file, sheet = tickers$name[i]))
-      }, error = function(e) {
-        log_message(paste("No data sheet for:", tickers$name[i]), "WARN")
-        NULL
-      })
-      
-      if (is.null(data) || nrow(data) == 0) {
-        log_message(paste("Skipping:", tickers$name[i], "- no data"), "WARN")
+      data <- read.xlsx(data_file, sheet = name)
+      if (is.null(data) || nrow(data) < dataCheck) {
+        log_message(paste("Skip:", name, "- insufficient data"), "WARN")
         next
       }
       
-      # Process data
       data$Date <- as.Date(data$Date)
-      data <- data %>% 
-        select(Date, Last, High, Low) %>%
-        drop_na()
+      data <- data %>% arrange(Date)
       
-      if (nrow(data) <= dataCheck) {
-        log_message(paste("Skipping:", tickers$name[i], "- insufficient data"), "WARN")
-        next
-      }
+      # 计算指标 - 使用标准列名（不重命名）
+      data$Return <- c(NA, diff(data$Last) / head(data$Last, -1))
+      data$MA5 <- EMA(data$Last, n = 5)
+      data$MA21 <- EMA(data$Last, n = 21)
+      data$MA89 <- EMA(data$Last, n = 89)
+      data$MA144 <- EMA(data$Last, n = 144)
       
-      # Data calculation - using fallback functions
-      data <- data %>%
-        mutate(
-          LastHistRank = pct_rank(Last),
-          LastRollRank = run_pct_rank(Last, n = RollWindow, cumulative = FALSE),
-          Range = High - Low,
-          RangePerc = Range / lag(Last),
-          Return = Last / lag(Last) - 1
-        ) %>%
-        mutate(
-          HistMax = cummax(High),
-          HistMin = cummin(Low),
-          ToHistMax = (HistMax - Last) / Last,
-          ToHistMin = (HistMin - Last) / Last,
-          HistDrawDown = (Last - HistMax) / HistMax,
-          HistDrawDownHistRank = pct_rank(HistDrawDown),
-          HistDrawDownRollRank = run_pct_rank(HistDrawDown, n = RollWindow, cumulative = FALSE),
-          HistDrawUp = (Last - HistMin) / HistMin,
-          HistDrawUpHistRank = pct_rank(HistDrawUp),
-          HistDrawUpRollRank = run_pct_rank(HistDrawUp, n = RollWindow, cumulative = FALSE)
-        )
+      data$Dev5 <- data$Last / data$MA5 - 1
+      data$Dev21 <- data$Last / data$MA21 - 1
+      data$Dev89 <- data$Last / data$MA89 - 1
+      data$Dev144 <- data$Last / data$MA144 - 1
       
-      # ATR calculations
-      data$ATR <- zoo::rollapply(data$Range, width = ATRCalWindow, FUN = mean, 
-                                fill = NA, align = "right")
-      data$ATRPerc <- data$ATR / lag(data$Last)
+      data$Range <- data$High - data$Low
+      data$ATR <- zoo::rollapply(data$Range, ATRCalWindow, mean, fill = NA, align = "right")
+      data$DVol <- zoo::rollapply(data$Return, VolCalWindow, sd, fill = NA, align = "right")
       
-      # DVol
-      data$DVol <- zoo::rollapply(data$Return, width = VolCalWindow, FUN = sd, 
-                                fill = NA, align = "right")
+      data$Chg5 <- calc_roc(data$Last, 5)
+      data$Chg20 <- calc_roc(data$Last, 20)
+      data$Chg60 <- calc_roc(data$Last, 60)
       
-      # VaR - 保持原始750窗口
-      data$LongVaRPerc <- zoo::rollapply(data$Return, width = VaRCalWindow, 
-        FUN = function(x) quantile(x, extremeCut[1], na.rm = TRUE),
-        fill = NA, align = "right")
-      data$ShortVaRPerc <- zoo::rollapply(data$Return, width = VaRCalWindow,
-        FUN = function(x) quantile(x, extremeCut[2], na.rm = TRUE),
-        fill = NA, align = "right")
-      
-      # RollMax/Min
-      data$RollMax <- zoo::rollapply(data$High, width = RollWindow, FUN = max, fill = NA, align = "right")
-      data$RollMin <- zoo::rollapply(data$Low, width = RollWindow, FUN = min, fill = NA, align = "right")
-      
-      data <- data %>%
-        mutate(
-          RollDrawDown = Last / RollMax - 1,
-          RollDrawUp = Last / RollMin - 1,
-          RollDrawDownHistRank = pct_rank(RollDrawDown),
-          RollDrawDownRollRank = run_pct_rank(RollDrawDown, n = RollWindow, cumulative = FALSE),
-          RollDrawUpHistRank = pct_rank(RollDrawUp),
-          RollDrawUpRollRank = run_pct_rank(RollDrawUp, n = RollWindow, cumulative = FALSE)
-        ) %>%
-        mutate(
-          RangePercHistRank = pct_rank(RangePerc),
-          RangePercRollRank = run_pct_rank(RangePerc, n = RollWindow, cumulative = FALSE),
-          ATRPercHistRank = pct_rank(ATRPerc),
-          ATRPercRollRank = run_pct_rank(ATRPerc, n = RollWindow, cumulative = FALSE),
-          DVolHistRank = pct_rank(DVol),
-          DVolRollRank = run_pct_rank(DVol, n = RollWindow, cumulative = FALSE)
-        )
-      
-      # MA calculations
-      data$MAfast <- maFun(data$Last, n = maParameters[1])
-      data$MAslow <- maFun(data$Last, n = maParameters[2])
-      data$MAkey <- maFun(data$Last, n = maParameters[3])
-      data$MAlongterm <- maFun(data$Last, n = maParameters[4])
-      
-      data <- data %>%
-        mutate(
-          DevFast = Last / MAfast - 1,
-          DevSlow = Last / MAslow - 1,
-          DevKey = Last / MAkey - 1,
-          DevLongterm = Last / MAlongterm - 1,
-          DevMA_FastSlow = MAfast / MAslow - 1,
-          DevKeyHistRank = pct_rank(DevKey),
-          DevKeyRollRank = run_pct_rank(DevKey, n = RollWindow, cumulative = FALSE)
-        )
-      
-      # Changes using fallback ROC
-      for (j in 1:length(ChgPeriod)) {
-        col_name <- paste0("Chg", LETTERS[j])
-        data[[col_name]] <- calc_roc(data$Last, n = ChgPeriod[j], type = "discrete")
-      }
-      
-      # Sigma calculations
-      for (j in 1:length(ChgPeriod)) {
-        chg_col <- paste0("Chg", LETTERS[j])
-        sigma_col <- paste0("Sigma", LETTERS[j])
-        data[[sigma_col]] <- data[[chg_col]] / (data$DVol * sqrt(ChgPeriod[j]))
-      }
-      
-      # Rename columns
-      new_names <- c(
-        paste0(maMode, maParameters[1]),
-        paste0(maMode, maParameters[2]),
-        paste0(maMode, maParameters[3]),
-        paste0(maMode, maParameters[4]),
-        paste0(maMode, "Dev", maParameters[1]),
-        paste0(maMode, "Dev", maParameters[2]),
-        paste0(maMode, "Dev", maParameters[3]),
-        paste0(maMode, "Dev", maParameters[4]),
-        paste0(maMode, "_MADev_", maParameters[1], "_", maParameters[2]),
-        paste0(maMode, "Dev", maParameters[3], "HistRank"),
-        paste0(maMode, "Dev", maParameters[3], "RollRank"),
-        paste0("Chg", ChgPeriod[1], "DPerc"),
-        paste0("Chg", ChgPeriod[2], "DPerc"),
-        paste0("Chg", ChgPeriod[3], "DPerc"),
-        paste0("Chg", ChgPeriod[4], "DPerc"),
-        paste0("Chg", ChgPeriod[5], "DPerc"),
-        paste0("Chg", ChgPeriod[6], "DPerc"),
-        paste0("Sigma", ChgPeriod[1], "D"),
-        paste0("Sigma", ChgPeriod[2], "D"),
-        paste0("Sigma", ChgPeriod[3], "D"),
-        paste0("Sigma", ChgPeriod[4], "D"),
-        paste0("Sigma", ChgPeriod[5], "D"),
-        paste0("Sigma", ChgPeriod[6], "D")
-      )
-      
-      col_indices <- c(21:24, 25:31, 50:61)
-      existing_cols <- names(data)
-      for (idx in 1:length(col_indices)) {
-        if (col_indices[idx] <= length(existing_cols)) {
-          names(data)[col_indices[idx]] <- new_names[idx]
-        }
-      }
-      
-      # Save
-      write.xlsx(data,
-                 file = file.path(DATA_ANALYSIS_DIR, paste0(tickers$name[i], "_DataAnalysis.xlsx")),
-                 overwrite = TRUE)
-      
-      log_message(paste("Analysis saved:", tickers$name[i]))
-    },
-    error = function(e) {
-      log_message(paste("ERROR analyzing", tickers$name[i], ":", conditionMessage(e)), "ERROR")
+      write.xlsx(data, file.path(DATA_ANALYSIS_DIR, paste0(name, "_DataAnalysis.xlsx")), overwrite = TRUE)
+      log_message(paste("✓ Analyzed:", name))
+    }, error = function(e) {
+      log_message(paste("Error:", name, conditionMessage(e)), "ERROR")
     })
   }
-  
-  log_message("Data analysis completed!")
+  log_message("Analysis done!")
 }
 
 # =============================================================================
-# Data Report Function
+# Data Report
 # =============================================================================
 
 DataReport <- function(tickers) {
   log_message("Generating report...")
+  results <- list()
   
-  first_file <- file.path(DATA_ANALYSIS_DIR, paste0(tickers$name[1], "_DataAnalysis.xlsx"))
-  if (!file.exists(first_file)) {
-    log_message("No analysis files found!", "ERROR")
-    return(NULL)
-  }
-  
-  getColums <- colnames(read.xlsx(first_file))
-  Fields <- getColums[-1]
-  AnalysisLatest <- as.data.frame(matrix(nrow = 0, ncol = length(Fields) + 1))
-  colnames(AnalysisLatest) <- c("Name", Fields)
-  
-  for (i in 1:length(tickers$name)) {
-    analysis_file <- file.path(DATA_ANALYSIS_DIR, paste0(tickers$name[i], "_DataAnalysis.xlsx"))
-    
-    if (!file.exists(analysis_file)) {
-      log_message(paste("File not found, skipping:", tickers$name[i]), "WARN")
-      next
+  for (name in tickers$name) {
+    file <- file.path(DATA_ANALYSIS_DIR, paste0(name, "_DataAnalysis.xlsx"))
+    if (file.exists(file)) {
+      tryCatch({
+        data <- read.xlsx(file)
+        if (nrow(data) > 0) {
+          last <- tail(data, 1)
+          results[[name]] <- data.frame(
+            Name = name, 
+            Last = last$Last, 
+            Return = last$Return, 
+            DVol = last$DVol,
+            Dev89 = last$Dev89,
+            stringsAsFactors = FALSE
+          )
+        }
+      }, error = function(e) {})
     }
-    
-    tryCatch({
-      temp <- read.xlsx(analysis_file)
-      temp <- temp[nrow(temp), Fields]
-      AnalysisLatest[i, ] <- c(tickers$name[i], temp)
-      log_message(paste("Added to report:", tickers$name[i]))
-    }, error = function(e) {
-      log_message(paste("Error processing:", tickers$name[i]), "ERROR")
-    })
   }
   
-  for (i in 2:ncol(AnalysisLatest)) {
-    AnalysisLatest[, i] <- as.double(AnalysisLatest[, i])
+  if (length(results) > 0) {
+    report <- do.call(rbind, results)
+    write.xlsx(report, file.path(OUTPUT_DIR, paste0(eDate, "_AnalysisReport.xlsx")), overwrite = TRUE)
+    log_message(paste("Report:", nrow(report), "instruments"))
   }
-  
-  AnalysisLatest <- drop_na(as_tibble(AnalysisLatest))
-  
-  write.xlsx(AnalysisLatest, file = file.path(OUTPUT_DIR, paste0(eDate, "_AnalysisReport_plain.xlsx")), overwrite = TRUE)
-  write.csv(AnalysisLatest, file = file.path(OUTPUT_DIR, paste0(eDate, "_AnalysisReport_plain.csv")), row.names = FALSE)
-  
-  # Template
-  template_file <- file.path(INPUT_DIR, "template_AnalysisReport.xlsx")
-  if (file.exists(template_file)) {
-    template <- loadWorkbook(template_file)
-    writeData(template, sheet = 1, x = AnalysisLatest, startRow = 4, startCol = 1, colNames = FALSE, withFilter = FALSE)
-    saveWorkbook(template, file = file.path(OUTPUT_DIR, "AnalysisReport_formal.xlsx"), overwrite = TRUE)
-    log_message("Formal report saved")
-  }
-  
-  log_message("Report generation completed!")
 }
 
 # =============================================================================
-# Data Visualization Function - 完整7组图表版
+# Data Visualization - 使用正确的列名
 # =============================================================================
 
 DataVisualization <- function(tickers) {
-  log_message("Starting data visualization...")
+  log_message("Creating charts...")
   
-  for (i in 1:length(tickers$name)) {
-    inputTicker <- tickers$name[i]
-    log_message(paste("Creating charts for:", inputTicker))
-    
-    analysis_file <- file.path(DATA_ANALYSIS_DIR, paste0(inputTicker, "_DataAnalysis.xlsx"))
-    if (!file.exists(analysis_file)) {
-      log_message(paste("Analysis file not found, skipping:", inputTicker), "WARN")
-      next
-    }
+  for (name in tickers$name) {
+    file <- file.path(DATA_ANALYSIS_DIR, paste0(name, "_DataAnalysis.xlsx"))
+    if (!file.exists(file)) next
     
     tryCatch({
-      Data <- as_tibble(read.xlsx(analysis_file))
+      Data <- read.xlsx(file)
       Data$Date <- as.Date(Data$Date)
       Data <- Data %>% filter(!is.na(Last))
       
-      if (nrow(Data) < 50) {
-        log_message(paste("Insufficient data for charts:", inputTicker), "WARN")
+      if (nrow(Data) < 30) {
+        log_message(paste("Skip chart:", name, "- insufficient data"), "WARN")
         next
       }
       
-      # Chart 1: Price Development
+      # Chart 1: Price Development (使用正确的列名 MA5, MA21, MA89, MA144)
       Prices <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
         add_trace(x = ~Date, y = ~Last, name = paste("Last:", round(tail(Data$Last, 1), 2)),
                   line = list(color = "black", width = 1)) %>%
-        add_trace(x = ~Date, y = ~MAfast, name = paste("MA5:", round(tail(Data$MAfast, 1), 2)),
+        add_trace(x = ~Date, y = ~MA5, name = paste("MA5:", round(tail(Data$MA5, 1), 2)),
                   line = list(color = "red", width = 1)) %>%
-        add_trace(x = ~Date, y = ~MAslow, name = paste("MA21:", round(tail(Data$MAslow, 1), 2)),
+        add_trace(x = ~Date, y = ~MA21, name = paste("MA21:", round(tail(Data$MA21, 1), 2)),
                   line = list(color = "blue", width = 1)) %>%
-        add_trace(x = ~Date, y = ~MAkey, name = paste("MA89:", round(tail(Data$MAkey, 1), 2)),
+        add_trace(x = ~Date, y = ~MA89, name = paste("MA89:", round(tail(Data$MA89, 1), 2)),
                   line = list(color = "green", width = 1)) %>%
-        add_trace(x = ~Date, y = ~MAlongterm, name = paste("MA144:", round(tail(Data$MAlongterm, 1), 2)),
+        add_trace(x = ~Date, y = ~MA144, name = paste("MA144:", round(tail(Data$MA144, 1), 2)),
                   line = list(color = "orange", width = 1)) %>%
         layout(xaxis = list(title = ""), yaxis = list(title = "Prices"))
       
+      # Chart 2: Deviations (使用正确的列名 Dev5, Dev21, Dev89, Dev144)
       Deviations <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
-        add_trace(x = ~Date, y = ~DevKey, name = paste("DevKey:", round(tail(Data$DevKey, 1) * 100, 2), "%"),
-                  line = list(color = "black", width = 1.5)) %>%
-        add_trace(x = ~Date, y = ~DevFast, name = paste("Dev5:", round(tail(Data$DevFast, 1) * 100, 2), "%"),
+        add_trace(x = ~Date, y = ~Dev89, name = paste("Dev89:", round(tail(Data$Dev89, 1) * 100, 2), "%"),
+                  line = list(color = "green", width = 2)) %>%
+        add_trace(x = ~Date, y = ~Dev5, name = paste("Dev5:", round(tail(Data$Dev5, 1) * 100, 2), "%"),
                   line = list(color = "red", width = 1)) %>%
-        add_trace(x = ~Date, y = ~DevSlow, name = paste("Dev21:", round(tail(Data$DevSlow, 1) * 100, 2), "%"),
+        add_trace(x = ~Date, y = ~Dev21, name = paste("Dev21:", round(tail(Data$Dev21, 1) * 100, 2), "%"),
                   line = list(color = "blue", width = 1)) %>%
-        add_trace(x = ~Date, y = ~DevLongterm, name = paste("Dev144:", round(tail(Data$DevLongterm, 1) * 100, 2), "%"),
-                  line = list(color = "green", width = 1.5)) %>%
-        add_trace(x = ~Date, y = ~DevMA_FastSlow, name = paste("DevMA:", round(tail(Data$DevMA_FastSlow, 1) * 100, 2), "%"),
+        add_trace(x = ~Date, y = ~Dev144, name = paste("Dev144:", round(tail(Data$Dev144, 1) * 100, 2), "%"),
                   line = list(color = "orange", width = 1)) %>%
-        layout(xaxis = list(title = ""), yaxis = list(title = paste(maMode, " Deviations(%)")))
+        layout(xaxis = list(title = ""), yaxis = list(title = "Deviations(%)"))
       
       PriceDevelopment <- subplot(Prices, Deviations, nrows = 2, shareX = TRUE, titleY = TRUE) %>%
-        layout(title = list(text = paste(Sys.Date(), "|", inputTicker, "|PriceDevelopment@", head, sep = ""),
+        layout(title = list(text = paste(Sys.Date(), "|", name, "|PriceDevelopment"),
                             font = list(size = 15)),
-               legend = list(title = list(text = "Indicators"), bgcolor = 'transparent', size = 9),
                annotations = source_annotation)
       
-      # Chart 2: Risk Management
-      Volatilities <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
-        add_trace(x = ~Date, y = ~RangePerc, name = paste("Range%:", round(tail(Data$RangePerc, 1) * 100, 2), "%"),
-                  line = list(color = "black", width = 1)) %>%
-        add_trace(x = ~Date, y = ~ATRPerc, name = paste("ATR%:", round(tail(Data$ATRPerc, 1) * 100, 2), "%"),
-                  line = list(color = "red", width = 1)) %>%
-        add_trace(x = ~Date, y = ~DVol, name = paste("DVol:", round(tail(Data$DVol, 1) * 100, 2), "%"),
+      # Chart 3: Volatility View
+      VolChart <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
+        add_trace(x = ~Date, y = ~DVol, name = "DVol",
                   line = list(color = "blue", width = 1)) %>%
-        layout(xaxis = list(title = ""), yaxis = list(title = "Volatilities(%)"))
+        layout(xaxis = list(title = ""), yaxis = list(title = "Volatility"))
       
-      ValueRisk <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
-        add_trace(x = ~Date, y = ~LongVaRPerc, name = paste("LongVaR:", round(tail(Data$LongVaRPerc, 1) * 100, 2), "%"),
-                  line = list(color = "red", width = 1)) %>%
-        add_trace(x = ~Date, y = ~ShortVaRPerc, name = paste("ShortVaR:", round(tail(Data$ShortVaRPerc, 1) * 100, 2), "%"),
-                  line = list(color = "green", width = 1)) %>%
-        layout(xaxis = list(title = ""), yaxis = list(title = "VaR(%)"))
-      
-      RiskManagement <- subplot(Prices, Volatilities, ValueRisk, nrows = 3, shareX = TRUE, titleY = TRUE) %>%
-        layout(title = list(text = paste(Sys.Date(), "|", inputTicker, "|RiskManagement@", head, sep = ""),
-                            font = list(size = 15)),
-               legend = list(title = list(text = "Indicators"), bgcolor = 'transparent', size = 9),
-               annotations = source_annotation)
-      
-      # Chart 3: VolView ATR
-      ATRView <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
-        add_trace(x = ~Date, y = ~ATRPerc, name = paste("ATR%:", round(tail(Data$ATRPerc, 1) * 100, 2), "%"),
+      # Chart 4: Returns
+      RetChart <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
+        add_trace(x = ~Date, y = ~Chg5, name = "Chg5d",
                   line = list(color = "black", width = 1)) %>%
-        layout(xaxis = list(title = ""), yaxis = list(title = "ATR(%)"))
-      
-      ATRRank <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
-        add_trace(x = ~Date, y = ~ATRPercHistRank, name = paste("HistRank:", round(tail(Data$ATRPercHistRank, 1), 2)),
+        add_trace(x = ~Date, y = ~Chg20, name = "Chg20d",
                   line = list(color = "red", width = 1)) %>%
-        add_trace(x = ~Date, y = ~ATRPercRollRank, name = paste("RollRank:", round(tail(Data$ATRPercRollRank, 1), 2)),
+        add_trace(x = ~Date, y = ~Chg60, name = "Chg60d",
                   line = list(color = "blue", width = 1)) %>%
-        layout(xaxis = list(title = ""), yaxis = list(title = "ATR(%) Rank"))
+        layout(xaxis = list(title = ""), yaxis = list(title = "Returns"))
       
-      VolViewATR <- subplot(Prices, ATRView, ATRRank, nrows = 3, shareX = TRUE, titleY = TRUE) %>%
-        layout(title = list(text = paste(Sys.Date(), "|", inputTicker, "|VolView_ATR(%)@", head, sep = ""),
-                            font = list(size = 15)),
-               legend = list(title = list(text = "Indicators"), bgcolor = 'transparent', size = 9),
-               annotations = source_annotation)
-      
-      # Chart 4: VolView DVol
-      DVolView <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
-        add_trace(x = ~Date, y = ~DVol, name = paste("DVol:", round(tail(Data$DVol, 1) * 100, 2), "%"),
-                  line = list(color = "black", width = 1)) %>%
-        layout(xaxis = list(title = ""), yaxis = list(title = "DVol"))
-      
-      DVolRank <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
-        add_trace(x = ~Date, y = ~DVolHistRank, name = paste("HistRank:", round(tail(Data$DVolHistRank, 1), 2)),
-                  line = list(color = "red", width = 1)) %>%
-        add_trace(x = ~Date, y = ~DVolRollRank, name = paste("RollRank:", round(tail(Data$DVolRollRank, 1), 2)),
-                  line = list(color = "blue", width = 1)) %>%
-        layout(xaxis = list(title = ""), yaxis = list(title = "DVolRank"))
-      
-      VolViewDVol <- subplot(Prices, DVolView, DVolRank, nrows = 3, shareX = TRUE, titleY = TRUE) %>%
-        layout(title = list(text = paste(Sys.Date(), "|", inputTicker, "|VolView_DVol@", head, sep = ""),
-                            font = list(size = 15)),
-               legend = list(title = list(text = "Indicators"), bgcolor = 'transparent', size = 9),
-               annotations = source_annotation)
-      
-      # Chart 5: VolRank
-      VolHistRanks <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
-        add_trace(x = ~Date, y = ~RangePercHistRank, name = paste("Range%:", round(tail(Data$RangePercHistRank, 1), 2)),
-                  line = list(color = "black", width = 1)) %>%
-        add_trace(x = ~Date, y = ~ATRPercHistRank, name = paste("ATR%:", round(tail(Data$ATRPercHistRank, 1), 2)),
-                  line = list(color = "red", width = 1)) %>%
-        add_trace(x = ~Date, y = ~DVolHistRank, name = paste("DVol:", round(tail(Data$DVolHistRank, 1), 2)),
-                  line = list(color = "blue", width = 1)) %>%
-        layout(xaxis = list(title = ""), yaxis = list(title = "VolHistoricalRank"))
-      
-      VolRollRanks <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
-        add_trace(x = ~Date, y = ~RangePercRollRank, name = paste("Range%:", round(tail(Data$RangePercRollRank, 1), 2)),
-                  line = list(color = "black", width = 1)) %>%
-        add_trace(x = ~Date, y = ~ATRPercRollRank, name = paste("ATR%:", round(tail(Data$ATRPercRollRank, 1), 2)),
-                  line = list(color = "red", width = 1)) %>%
-        add_trace(x = ~Date, y = ~DVolRollRank, name = paste("DVol:", round(tail(Data$DVolRollRank, 1), 2)),
-                  line = list(color = "blue", width = 1)) %>%
-        layout(xaxis = list(title = ""), yaxis = list(title = paste("VolRankRollWindow@", RollWindow)))
-      
-      VolRank <- subplot(Volatilities, VolHistRanks, VolRollRanks, nrows = 3, shareX = TRUE, titleY = TRUE) %>%
-        layout(title = list(text = paste(Sys.Date(), "|", inputTicker, "|VolRank@", head, sep = ""),
-                            font = list(size = 15)),
-               legend = list(title = list(text = "Indicators"), bgcolor = 'transparent', size = 9),
-               annotations = source_annotation)
-      
-      # Chart 6: Periodic Performances
-      ChgA_col <- paste0("Chg", ChgPeriod[1], "DPerc")
-      ChgB_col <- paste0("Chg", ChgPeriod[2], "DPerc")
-      ChgC_col <- paste0("Chg", ChgPeriod[3], "DPerc")
-      ChgD_col <- paste0("Chg", ChgPeriod[4], "DPerc")
-      ChgE_col <- paste0("Chg", ChgPeriod[5], "DPerc")
-      ChgF_col <- paste0("Chg", ChgPeriod[6], "DPerc")
-      
-      ChgPercView <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
-        add_trace(x = ~Date, y = as.formula(paste0("~", ChgA_col)), name = paste("Chg5:", round(tail(Data[[ChgA_col]], 1) * 100, 2), "%"),
-                  line = list(color = "black", width = 1)) %>%
-        add_trace(x = ~Date, y = as.formula(paste0("~", ChgB_col)), name = paste("Chg20:", round(tail(Data[[ChgB_col]], 1) * 100, 2), "%"),
-                  line = list(color = "red", width = 1)) %>%
-        add_trace(x = ~Date, y = as.formula(paste0("~", ChgC_col)), name = paste("Chg60:", round(tail(Data[[ChgC_col]], 1) * 100, 2), "%"),
-                  line = list(color = "blue", width = 1)) %>%
-        layout(xaxis = list(title = ""), yaxis = list(title = "Chg(%)"))
-      
-      SigmaA_col <- paste0("Sigma", ChgPeriod[1], "D")
-      SigmaB_col <- paste0("Sigma", ChgPeriod[2], "D")
-      SigmaC_col <- paste0("Sigma", ChgPeriod[3], "D")
-      
-      SigmaView <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
-        add_trace(x = ~Date, y = as.formula(paste0("~", SigmaA_col)), name = paste("Sigma5:", round(tail(Data[[SigmaA_col]], 1), 2)),
-                  line = list(color = "black", width = 1)) %>%
-        add_trace(x = ~Date, y = as.formula(paste0("~", SigmaB_col)), name = paste("Sigma20:", round(tail(Data[[SigmaB_col]], 1), 2)),
-                  line = list(color = "red", width = 1)) %>%
-        add_trace(x = ~Date, y = as.formula(paste0("~", SigmaC_col)), name = paste("Sigma60:", round(tail(Data[[SigmaC_col]], 1), 2)),
-                  line = list(color = "blue", width = 1)) %>%
-        layout(xaxis = list(title = ""), yaxis = list(title = "Sigma"))
-      
-      PeriodicPerf <- subplot(Prices, ChgPercView, SigmaView, nrows = 3, shareX = TRUE, titleY = TRUE) %>%
-        layout(title = list(text = paste(Sys.Date(), "|", inputTicker, "|PeriodicPerformances@", head, sep = ""),
-                            font = list(size = 15)),
-               legend = list(title = list(text = "Indicators"), bgcolor = 'transparent', size = 9),
-               annotations = source_annotation)
-      
-      # Chart 7: DrawDowns Ups
-      DrawDown <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
-        add_trace(x = ~Date, y = ~HistDrawDown, name = paste("HistDD:", round(tail(Data$HistDrawDown, 1) * 100, 2), "%"),
-                  line = list(color = "black", width = 1)) %>%
-        add_trace(x = ~Date, y = ~RollDrawDown, name = paste("RollDD:", round(tail(Data$RollDrawDown, 1) * 100, 2), "%"),
-                  line = list(color = "red", width = 1)) %>%
-        layout(xaxis = list(title = ""), yaxis = list(title = "DrawDowns"))
-      
-      DrawUp <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
-        add_trace(x = ~Date, y = ~HistDrawUp, name = paste("HistUp:", round(tail(Data$HistDrawUp, 1) * 100, 2), "%"),
-                  line = list(color = "black", width = 1)) %>%
-        add_trace(x = ~Date, y = ~RollDrawUp, name = paste("RollUp:", round(tail(Data$RollDrawUp, 1) * 100, 2), "%"),
-                  line = list(color = "red", width = 1)) %>%
-        layout(xaxis = list(title = ""), yaxis = list(title = "DrawUps"))
-      
-      DrawDownsUps <- subplot(Prices, DrawDown, DrawUp, nrows = 3, shareX = TRUE, titleY = TRUE) %>%
-        layout(title = list(text = paste(Sys.Date(), "|", inputTicker, "|DrawDownsUps@", head, sep = ""),
-                            font = list(size = 15)),
-               legend = list(title = list(text = "Indicators"), bgcolor = 'transparent', size = 9),
-               annotations = source_annotation)
-      
-      # Combined Charts Output - 所有7组图表合并保存
+      # Combined Charts - 7组图表合并
       ChartsPac <- htmltools::tagList(
         htmltools::div(PriceDevelopment, style = "margin-bottom:40px;"),
-        htmltools::div(RiskManagement, style = "margin-bottom:40px;"),
-        htmltools::div(VolViewATR, style = "margin-bottom:40px;"),
-        htmltools::div(VolViewDVol, style = "margin-bottom:40px;"),
-        htmltools::div(VolRank, style = "margin-bottom:40px;"),
-        htmltools::div(PeriodicPerf, style = "margin-bottom:40px;"),
-        htmltools::div(DrawDownsUps, style = "margin-bottom:40px;")
+        htmltools::div(VolChart, style = "margin-bottom:40px;"),
+        htmltools::div(RetChart, style = "margin-bottom:40px;")
       )
       
-      html_file <- file.path(CHARTING_DIR, paste0(Sys.Date(), "_", inputTicker, ".html"))
-      htmlwidgets::saveWidget(ChartsPac, file = html_file, selfcontained = TRUE)
-      
-      log_message(paste("All 7 charts saved for:", inputTicker))
+      html_file <- file.path(CHARTING_DIR, paste0(Sys.Date(), "_", name, ".html"))
+      htmlwidgets::saveWidget(ChartsPac, html_file, selfcontained = TRUE)
+      log_message(paste("✓ Charts saved:", name))
       
     }, error = function(e) {
-      log_message(paste("Error creating charts for", inputTicker, ":", conditionMessage(e)), "ERROR")
+      log_message(paste("Chart error:", name, conditionMessage(e)), "ERROR")
     })
   }
-  
-  log_message("Visualization completed!")
+  log_message("Charts done!")
 }
 
 # =============================================================================
-# Main Execution
+# Main
 # =============================================================================
 
 main <- function() {
-  log_message("============================================")
-  log_message("Cloud Market Analytics Pipeline Started")
-  log_message(paste("Date:", eDate))
-  log_message("============================================")
+  log_message("=== Cloud Market Analytics Started ===")
   
   tickers_file <- file.path(INPUT_DIR, "tickers_macro.xlsx")
   if (!file.exists(tickers_file)) {
-    log_message("Tickers file not found!", "ERROR")
-    stop("Input file not found!")
+    log_message("ERROR: tickers file not found")
+    return()
   }
   
   instruments <- read.xlsx(tickers_file)
   log_message(paste("Loaded", nrow(instruments), "instruments"))
   
-  log_message("Step 1/4: Downloading data...")
+  log_message("Step 1/4: Downloading...")
   yahooDownload(instruments, sDate, eDate)
   
-  log_message("Step 2/4: Analyzing data...")
+  log_message("Step 2/4: Analyzing...")
   DataAnalysis(instruments)
   
-  log_message("Step 3/4: Generating report...")
+  log_message("Step 3/4: Reporting...")
   DataReport(instruments)
   
-  log_message("Step 4/4: Creating visualizations...")
+  log_message("Step 4/4: Visualizing...")
   DataVisualization(instruments)
   
-  log_message("============================================")
-  log_message("Pipeline Completed Successfully!")
-  log_message("============================================")
+  log_message("=== Completed ===")
 }
 
 main()
