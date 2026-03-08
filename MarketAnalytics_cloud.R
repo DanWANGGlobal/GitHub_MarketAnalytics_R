@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
-# Cloud-Ready Market Analytics Script - 稳定运行版
-# 修复了所有列名和兼容性问题
+# Cloud-Ready Market Analytics Script - 最终稳定版
+# 修复了NA处理和空值检查
 
 # =============================================================================
 # Environment Setup
@@ -18,7 +18,7 @@ for (dir in c(OUTPUT_DIR, DATA_ANALYSIS_DIR, CHARTING_DIR)) {
 setwd(WORK_DIR)
 
 # =============================================================================
-# Package Management - 核心包
+# Package Management
 # =============================================================================
 
 message("Loading packages...")
@@ -36,16 +36,14 @@ for (pkg in packages) {
 message("Packages loaded!")
 
 # =============================================================================
-# Parameters - 保持原始参数
+# Parameters
 # =============================================================================
 
 dataHistory <- 10
 eDate <- Sys.Date()
 sDate <- eDate - years(dataHistory)
 
-maMode <- "EMA"
 maParameters <- c(5, 21, 89, 144)
-
 VolCalWindow <- 20
 ATRCalWindow <- 6
 VaRCalWindow <- 750
@@ -100,6 +98,14 @@ calc_roc <- function(prices, n) {
   c(rep(NA, n), diff(prices, n) / lag(prices, n)[(n+1):length(prices)])
 }
 
+# 安全获取最后值的函数
+safe_last <- function(x, default = NA) {
+  if (length(x) == 0 || all(is.na(x))) return(default)
+  val <- tail(na.omit(x), 1)
+  if (length(val) == 0) return(default)
+  return(val)
+}
+
 log_message <- function(msg, level = "INFO") {
   timestamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
   log_entry <- paste0("[", timestamp, "] [", level, "] ", msg)
@@ -144,7 +150,7 @@ yahooDownload <- function(tickers, sDate, eDate) {
 }
 
 # =============================================================================
-# Data Analysis - 简化版，使用标准列名
+# Data Analysis
 # =============================================================================
 
 DataAnalysis <- function(tickers) {
@@ -165,7 +171,15 @@ DataAnalysis <- function(tickers) {
       data$Date <- as.Date(data$Date)
       data <- data %>% arrange(Date)
       
-      # 计算指标 - 使用标准列名（不重命名）
+      # 移除NA行
+      data <- data %>% filter(!is.na(Last), !is.na(High), !is.na(Low))
+      
+      if (nrow(data) < dataCheck) {
+        log_message(paste("Skip:", name, "- insufficient data after NA removal"), "WARN")
+        next
+      }
+      
+      # 计算指标
       data$Return <- c(NA, diff(data$Last) / head(data$Last, -1))
       data$MA5 <- EMA(data$Last, n = 5)
       data$MA21 <- EMA(data$Last, n = 21)
@@ -230,7 +244,7 @@ DataReport <- function(tickers) {
 }
 
 # =============================================================================
-# Data Visualization - 使用正确的列名
+# Data Visualization - 修复版（处理NA和空值）
 # =============================================================================
 
 DataVisualization <- function(tickers) {
@@ -243,36 +257,50 @@ DataVisualization <- function(tickers) {
     tryCatch({
       Data <- read.xlsx(file)
       Data$Date <- as.Date(Data$Date)
-      Data <- Data %>% filter(!is.na(Last))
+      
+      # 移除NA行
+      Data <- Data %>% filter(!is.na(Last), !is.na(Date))
       
       if (nrow(Data) < 30) {
         log_message(paste("Skip chart:", name, "- insufficient data"), "WARN")
         next
       }
       
-      # Chart 1: Price Development (使用正确的列名 MA5, MA21, MA89, MA144)
+      # 获取安全的最后值
+      last_price <- safe_last(Data$Last, 0)
+      last_ma5 <- safe_last(Data$MA5, 0)
+      last_ma21 <- safe_last(Data$MA21, 0)
+      last_ma89 <- safe_last(Data$MA89, 0)
+      last_ma144 <- safe_last(Data$MA144, 0)
+      
+      # Chart 1: Price Development
       Prices <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
-        add_trace(x = ~Date, y = ~Last, name = paste("Last:", round(tail(Data$Last, 1), 2)),
+        add_trace(x = ~Date, y = ~Last, name = paste("Last:", round(last_price, 2)),
                   line = list(color = "black", width = 1)) %>%
-        add_trace(x = ~Date, y = ~MA5, name = paste("MA5:", round(tail(Data$MA5, 1), 2)),
+        add_trace(x = ~Date, y = ~MA5, name = paste("MA5:", round(last_ma5, 2)),
                   line = list(color = "red", width = 1)) %>%
-        add_trace(x = ~Date, y = ~MA21, name = paste("MA21:", round(tail(Data$MA21, 1), 2)),
+        add_trace(x = ~Date, y = ~MA21, name = paste("MA21:", round(last_ma21, 2)),
                   line = list(color = "blue", width = 1)) %>%
-        add_trace(x = ~Date, y = ~MA89, name = paste("MA89:", round(tail(Data$MA89, 1), 2)),
+        add_trace(x = ~Date, y = ~MA89, name = paste("MA89:", round(last_ma89, 2)),
                   line = list(color = "green", width = 1)) %>%
-        add_trace(x = ~Date, y = ~MA144, name = paste("MA144:", round(tail(Data$MA144, 1), 2)),
+        add_trace(x = ~Date, y = ~MA144, name = paste("MA144:", round(last_ma144, 2)),
                   line = list(color = "orange", width = 1)) %>%
         layout(xaxis = list(title = ""), yaxis = list(title = "Prices"))
       
-      # Chart 2: Deviations (使用正确的列名 Dev5, Dev21, Dev89, Dev144)
+      # Chart 2: Deviations
+      last_dev89 <- safe_last(Data$Dev89, 0)
+      last_dev5 <- safe_last(Data$Dev5, 0)
+      last_dev21 <- safe_last(Data$Dev21, 0)
+      last_dev144 <- safe_last(Data$Dev144, 0)
+      
       Deviations <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
-        add_trace(x = ~Date, y = ~Dev89, name = paste("Dev89:", round(tail(Data$Dev89, 1) * 100, 2), "%"),
+        add_trace(x = ~Date, y = ~Dev89, name = paste("Dev89:", round(last_dev89 * 100, 2), "%"),
                   line = list(color = "green", width = 2)) %>%
-        add_trace(x = ~Date, y = ~Dev5, name = paste("Dev5:", round(tail(Data$Dev5, 1) * 100, 2), "%"),
+        add_trace(x = ~Date, y = ~Dev5, name = paste("Dev5:", round(last_dev5 * 100, 2), "%"),
                   line = list(color = "red", width = 1)) %>%
-        add_trace(x = ~Date, y = ~Dev21, name = paste("Dev21:", round(tail(Data$Dev21, 1) * 100, 2), "%"),
+        add_trace(x = ~Date, y = ~Dev21, name = paste("Dev21:", round(last_dev21 * 100, 2), "%"),
                   line = list(color = "blue", width = 1)) %>%
-        add_trace(x = ~Date, y = ~Dev144, name = paste("Dev144:", round(tail(Data$Dev144, 1) * 100, 2), "%"),
+        add_trace(x = ~Date, y = ~Dev144, name = paste("Dev144:", round(last_dev144 * 100, 2), "%"),
                   line = list(color = "orange", width = 1)) %>%
         layout(xaxis = list(title = ""), yaxis = list(title = "Deviations(%)"))
       
@@ -281,7 +309,7 @@ DataVisualization <- function(tickers) {
                             font = list(size = 15)),
                annotations = source_annotation)
       
-      # Chart 3: Volatility View
+      # Chart 3: Volatility
       VolChart <- plot_ly(Data, type = 'scatter', mode = 'lines') %>%
         add_trace(x = ~Date, y = ~DVol, name = "DVol",
                   line = list(color = "blue", width = 1)) %>%
@@ -297,7 +325,7 @@ DataVisualization <- function(tickers) {
                   line = list(color = "blue", width = 1)) %>%
         layout(xaxis = list(title = ""), yaxis = list(title = "Returns"))
       
-      # Combined Charts - 7组图表合并
+      # Combined Charts
       ChartsPac <- htmltools::tagList(
         htmltools::div(PriceDevelopment, style = "margin-bottom:40px;"),
         htmltools::div(VolChart, style = "margin-bottom:40px;"),
