@@ -60,13 +60,19 @@ def get_webdav_client():
         return get_webdav_client()
 
 def ensure_remote_directory(client, remote_path):
-    """创建远程目录（如果不存在）"""
+    """创建远程目录（如果不存在，或已存在则忽略）"""
     try:
-        if not client.exists(remote_path):
-            client.mkdir(remote_path)
-            logger.info(f"Created remote directory: {remote_path}")
+        if client.exists(remote_path):
+            logger.info(f"Remote directory already exists: {remote_path}")
+            return True
+        client.mkdir(remote_path)
+        logger.info(f"Created remote directory: {remote_path}")
         return True
     except Exception as e:
+        if "409" in str(e) or "Conflict" in str(e):
+            # 目录已存在，这是正常的
+            logger.info(f"Directory already exists (409): {remote_path}")
+            return True
         logger.error(f"Failed to create directory {remote_path}: {e}")
         return False
 
