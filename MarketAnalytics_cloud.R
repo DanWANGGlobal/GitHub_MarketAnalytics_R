@@ -29,9 +29,9 @@ log_message <- function(msg, level = "INFO") {
   cat(log_entry, "\n", file = log_file, append = TRUE)
 }
 
-log_message("=" %>% rep(60, paste = ""))
+log_message(paste(rep("=", 60), collapse = ""))
 log_message("Starting Cloud Market Analytics")
-log_message("=" %>% rep(60, paste = ""))
+log_message(paste(rep("=", 60), collapse = ""))
 
 # =============================================================================
 # Package Management
@@ -357,10 +357,10 @@ DataVisualization <- function(tickers) {
 # =============================================================================
 
 main <- function() {
-  log_message("=" %>% rep(60, paste = ""))
+  log_message(paste(rep("=", 60), collapse = ""))
   log_message("Cloud Market Analytics Pipeline")
   log_message(paste("Date:", eDate))
-  log_message("=" %>% rep(60, paste = ""))
+  log_message(paste(rep("=", 60), collapse = ""))
   
   tickers_file <- file.path(INPUT_DIR, "tickers_macro.xlsx")
   if (!file.exists(tickers_file)) {
@@ -384,9 +384,9 @@ main <- function() {
   log_message("\nStep 4/4: Creating visualizations...")
   DataVisualization(instruments)
   
-  log_message("\n" %>% rep(60, paste = ""))
+  log_message(paste(rep("=", 60), collapse = ""))
   log_message("Pipeline Completed!")
-  log_message("=" %>% rep(60, paste = ""))
+  log_message(paste(rep("=", 60), collapse = ""))
 }
 
 main()
