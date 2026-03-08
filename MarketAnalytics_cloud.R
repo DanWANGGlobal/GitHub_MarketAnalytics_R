@@ -311,7 +311,7 @@ DataAnalysis <- function (tickers) {
       # MA calculations
       data$MAfast <- maFun(data$Last, n = maParameters[1])
       data$MAslow <- maFun(data$Last, n = maParameters[2])
-      data$MAkey 㱏 maFun(data$Last, n = maParameters[3])
+      data$MAkey <- maFun(data$Last, n = maParameters[3])
       data$MAlongterm <- maFun(data$Last, n = maParameters[4])
       
       data <- data %>%
