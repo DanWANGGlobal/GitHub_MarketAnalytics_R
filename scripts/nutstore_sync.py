@@ -156,7 +156,7 @@ def sync_to_nutstore():
     output_dir = Path(work_dir) / 'output'
     
     # 远程路径配置
-    remote_base = os.environ.get('NUTSTORE_REMOTE_PATH', 'R-Analysis-Output').strip('/')
+    remote_base = os.environ.get('NUTSTORE_REMOTE_PATH', 'GitHub_MarketAnalytics_R_Output').strip('/')
     today = datetime.now().strftime('%Y-%m-%d')
     
     logger.info("=" * 60)
