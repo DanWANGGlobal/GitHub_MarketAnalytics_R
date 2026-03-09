@@ -24,7 +24,7 @@ setwd(WORK_DIR)
 message("Loading packages...")
 
 packages <- c("quantmod", "xts", "openxlsx", "dplyr", "lubridate", "zoo", 
-              "TTR", "ggplot2", "gridExtra", "scales")
+              "TTR", "ggplot2", "gridExtra", "scales", "slider")
 
 missing_packages <- c()
 for (pkg in packages) {
