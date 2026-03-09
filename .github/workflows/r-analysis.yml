@@ -32,6 +32,16 @@ jobs:
       with:
         r-version: '4.3.0'
         
+    - name: Cache R Packages
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/R
+          ~/R/x86_64-pc-linux-gnu-library
+        key: r-packages-${{ hashFiles('**/MarketAnalytics_cloud.R') }}
+        restore-keys: |
+          r-packages-
+        
     - name: Install System Dependencies
       run: |
         sudo apt-get update

@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
-# Cloud-Ready Market Analytics - 完整还原版
-# 完全匹配原始本地版本输出
+# Cloud-Ready Market Analytics - 完整修复版
+# 修复slider错误，优化包安装，确保与本地版本输出一致
 
 # =============================================================================
 # Environment Setup
@@ -18,20 +18,30 @@ for (dir in c(OUTPUT_DIR, DATA_ANALYSIS_DIR, CHARTING_DIR)) {
 setwd(WORK_DIR)
 
 # =============================================================================
-# Package Management - 完整版
+# Package Management - 优化版（避免重复安装）
 # =============================================================================
 
 message("Loading packages...")
 
-# 基础包
+# 基础包列表
 packages <- c("quantmod", "xts", "openxlsx", "dplyr", "lubridate", "zoo", 
               "TTR", "plotly", "htmltools", "htmlwidgets", "tidyquant", 
               "PerformanceAnalytics", "slider", "scales")
 
+# 优化的包加载逻辑 - 只安装缺失的包
+missing_packages <- c()
 for (pkg in packages) {
   if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
-    message(paste("Installing", pkg))
-    install.packages(pkg, repos = "https://cloud.r-project.org/", quiet = TRUE)
+    missing_packages <- c(missing_packages, pkg)
+  }
+}
+
+# 批量安装缺失的包（只执行一次）
+if (length(missing_packages) > 0) {
+  message(paste("Installing missing packages:", paste(missing_packages, collapse = ", ")))
+  install.packages(missing_packages, repos = "https://cloud.r-project.org/", quiet = TRUE, Ncpus = 2)
+  # 加载新安装的包
+  for (pkg in missing_packages) {
     library(pkg, character.only = TRUE)
   }
 }
@@ -143,7 +153,7 @@ yahooDownload <- function(tickers, sDate, eDate) {
 }
 
 # =============================================================================
-# Data Analysis - 完全还原原始版本
+# Data Analysis - 修复slider错误版本
 # =============================================================================
 
 DataAnalysis <- function(tickers) {
@@ -182,11 +192,12 @@ DataAnalysis <- function(tickers) {
         next
       }
       
-      # 核心计算 - 完全匹配原始代码
+      # 核心计算 - 修复slider错误：使用tail获取最后一个值的排名
       data <- data %>%
         mutate(
           LastHistRank = percent_rank(Last),
-          LastRollRank = slider::slide_dbl(Last, percent_rank, .before = RollWindow - 1, .complete = TRUE)
+          # 修复：percent_rank返回向量，需要取最后一个值
+          LastRollRank = slider::slide_dbl(Last, ~ tail(percent_rank(.x), 1), .before = RollWindow - 1, .complete = TRUE)
         ) %>%
         mutate(
           Range = High - Low,
@@ -202,10 +213,12 @@ DataAnalysis <- function(tickers) {
           ToHistMin = (HistMin - Last) / Last,
           HistDrawDown = (Last - HistMax) / HistMax,
           HistDrawDownHistRank = percent_rank(HistDrawDown),
-          HistDrawDownRollRank = slider::slide_dbl(HistDrawDown, percent_rank, .before = RollWindow - 1, .complete = TRUE),
+          # 修复slider错误
+          HistDrawDownRollRank = slider::slide_dbl(HistDrawDown, ~ tail(percent_rank(.x), 1), .before = RollWindow - 1, .complete = TRUE),
           HistDrawUp = (Last - HistMin) / HistMin,
           HistDrawUpHistRank = percent_rank(HistDrawUp),
-          HistDrawUpRollRank = slider::slide_dbl(HistDrawUp, percent_rank, .before = RollWindow - 1, .complete = TRUE)
+          # 修复slider错误
+          HistDrawUpRollRank = slider::slide_dbl(HistDrawUp, ~ tail(percent_rank(.x), 1), .before = RollWindow - 1, .complete = TRUE)
         )
       
       # ATR和波动率
@@ -224,15 +237,15 @@ DataAnalysis <- function(tickers) {
                                           function(x) quantile(x, extremeCut[2], na.rm = TRUE), 
                                           fill = NA, align = "right")
       
-      # 排名计算
+      # 排名计算 - 修复所有slider错误
       data <- data %>%
         mutate(
           RangePercHistRank = percent_rank(RangePerc),
-          RangePercRollRank = slider::slide_dbl(RangePerc, percent_rank, .before = RollWindow - 1, .complete = TRUE),
+          RangePercRollRank = slider::slide_dbl(RangePerc, ~ tail(percent_rank(.x), 1), .before = RollWindow - 1, .complete = TRUE),
           ATRPercHistRank = percent_rank(ATRPerc),
-          ATRPercRollRank = slider::slide_dbl(ATRPerc, percent_rank, .before = RollWindow - 1, .complete = TRUE),
+          ATRPercRollRank = slider::slide_dbl(ATRPerc, ~ tail(percent_rank(.x), 1), .before = RollWindow - 1, .complete = TRUE),
           DVolHistRank = percent_rank(DVol),
-          DVolRollRank = slider::slide_dbl(DVol, percent_rank, .before = RollWindow - 1, .complete = TRUE)
+          DVolRollRank = slider::slide_dbl(DVol, ~ tail(percent_rank(.x), 1), .before = RollWindow - 1, .complete = TRUE)
         )
       
       # RollMax/Min
@@ -245,9 +258,9 @@ DataAnalysis <- function(tickers) {
           RollDrawDown = Last / RollMax - 1,
           RollDrawUp = Last / RollMin - 1,
           RollDrawDownHistRank = percent_rank(RollDrawDown),
-          RollDrawDownRollRank = slider::slide_dbl(RollDrawDown, percent_rank, .before = RollWindow - 1, .complete = TRUE),
+          RollDrawDownRollRank = slider::slide_dbl(RollDrawDown, ~ tail(percent_rank(.x), 1), .before = RollWindow - 1, .complete = TRUE),
           RollDrawUpHistRank = percent_rank(RollDrawUp),
-          RollDrawUpRollRank = slider::slide_dbl(RollDrawUp, percent_rank, .before = RollWindow - 1, .complete = TRUE)
+          RollDrawUpRollRank = slider::slide_dbl(RollDrawUp, ~ tail(percent_rank(.x), 1), .before = RollWindow - 1, .complete = TRUE)
         )
       
       # 移动平均 - 使用原始命名
@@ -265,7 +278,7 @@ DataAnalysis <- function(tickers) {
           EMADev144 = Last / EMA144 - 1,
           EMA_MADev_5_21 = EMA5 / EMA21 - 1,
           EMADev89HistRank = percent_rank(EMADev89),
-          EMADev89RollRank = slider::slide_dbl(EMADev89, percent_rank, .before = RollWindow - 1, .complete = TRUE)
+          EMADev89RollRank = slider::slide_dbl(EMADev89, ~ tail(percent_rank(.x), 1), .before = RollWindow - 1, .complete = TRUE)
         )
       
       # 收益率和Sigma - 完全匹配原始
@@ -460,7 +473,7 @@ DataVisualization <- function(tickers) {
 
 main <- function() {
   message("============================================")
-  message("Market Analytics Pipeline")
+  message("Market Analytics Pipeline - Fixed Version")
   message(paste("Date:", eDate))
   message("============================================")
   
