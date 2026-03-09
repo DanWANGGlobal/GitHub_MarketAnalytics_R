@@ -14,10 +14,14 @@ on:
 
 env:
   WORK_DIR: ${{ github.workspace }}
+  # 可选：坚果云配置（如果保留）
   NUTSTORE_USER: ${{ secrets.NUTSTORE_USER }}
   NUTSTORE_PASSWORD: ${{ secrets.NUTSTORE_PASSWORD }}
   NUTSTORE_WEBDAV_URL: ${{ secrets.NUTSTORE_WEBDAV_URL }}
   NUTSTORE_REMOTE_PATH: ${{ secrets.NUTSTORE_REMOTE_PATH }}
+  # Google Drive配置
+  GOOGLE_CREDENTIALS_B64: ${{ secrets.GOOGLE_CREDENTIALS_B64 }}
+  GDRIVE_FOLDER_NAME: ${{ secrets.GDRIVE_FOLDER_NAME }}
 
 jobs:
   r-analysis:
@@ -54,7 +58,8 @@ jobs:
           libfreetype6-dev \
           libpng-dev \
           libtiff5-dev \
-          libjpeg-dev
+          libjpeg-dev \
+          libfontconfig1-dev
           
     - name: Setup Python
       uses: actions/setup-python@v4
@@ -64,6 +69,8 @@ jobs:
     - name: Install Python Dependencies
       run: |
         pip install webdav4 requests
+        # Google Drive依赖（可选）
+        pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
         
     - name: Run R Analysis
       run: |
@@ -80,10 +87,18 @@ jobs:
           output/*.csv
           output/analysis.log
           output/dataAnalysis/*.xlsx
-          output/charting/**/*.html
+          output/charting/*.png
+          output/charting/*.pdf
         retention-days: 7
         
-    - name: Sync to Nutstore
+    - name: Sync to Nutstore (if configured)
       if: env.NUTSTORE_USER != '' && env.NUTSTORE_PASSWORD != ''
+      continue-on-error: true  # 坚果云失败不阻塞流程
       run: |
         python scripts/nutstore_sync.py
+        
+    - name: Sync to Google Drive (if configured)
+      if: env.GOOGLE_CREDENTIALS_B64 != ''
+      continue-on-error: true
+      run: |
+        python scripts/gdrive_sync.py
