@@ -42,7 +42,7 @@ def get_webdav_client():
         
         # 测试连接
         try:
-            client.list('/')
+            client.ls('/')
             logger.info("Successfully connected to Nutstore WebDAV")
             return client
         except Exception as e:

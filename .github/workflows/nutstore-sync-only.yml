@@ -1,0 +1,40 @@
+name: Sync to Nutstore Only
+
+on:
+  workflow_dispatch:  # 只有手动触发
+
+env:
+  WORK_DIR: ${{ github.workspace }}
+  NUTSTORE_USER: ${{ secrets.NUTSTORE_USER }}
+  NUTSTORE_PASSWORD: ${{ secrets.NUTSTORE_PASSWORD }}
+  NUTSTORE_WEBDAV_URL: ${{ secrets.NUTSTORE_WEBDAV_URL }}
+  NUTSTORE_REMOTE_PATH: ${{ secrets.NUTSTORE_REMOTE_PATH }}
+
+jobs:
+  nutstore-sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install Python Dependencies
+      run: |
+        pip install webdav4 requests
+        
+    - name: Download Previous Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: analysis-output-${{ github.run_id }}
+        path: output/
+      continue-on-error: true  # 如果之前没有artifacts，继续执行
+        
+    - name: Sync to Nutstore
+      if: env.NUTSTORE_USER != '' && env.NUTSTORE_PASSWORD != ''
+      run: |
+        python scripts/nutstore_sync.py
