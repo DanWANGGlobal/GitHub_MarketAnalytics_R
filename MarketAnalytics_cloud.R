@@ -474,9 +474,9 @@ main <- function() {
   message(paste("Date:", eDate))
   message("============================================")
   
-  tickers_file <- file.path(INPUT_DIR, "tickers_macro.xlsx")
+  tickers_file <- file.path(INPUT_DIR, "tickers_pool.xlsx")
   if (!file.exists(tickers_file)) {
-    message("FATAL ERROR: tickers_macro.xlsx not found!")
+    message("FATAL ERROR: tickers_pool.xlsx not found!")
     return()
   }
   
